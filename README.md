@@ -251,3 +251,7 @@ rm -rf ~/.local/share/piper-voices ~/.claude/.tts-config
 - Moteur : [Piper](https://github.com/rhasspy/piper) ; voix : [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). Chaque voix a sa propre licence, indiquée dans sa fiche Hugging Face.
 
 Ce dépôt ne contient que de la documentation et un petit script ; il ne redistribue ni le plugin ni les voix.
+
+## Licence
+
+[MIT](./LICENSE) : libre de copier, modifier et redistribuer, y compris pour un usage commercial.
