@@ -12,6 +12,20 @@ On s'appuie sur :
 
 ---
 
+## Installation rapide
+
+```bash
+git clone https://github.com/Rev0li/TextToSpeech_claude.git
+cd TextToSpeech_claude
+./install.sh
+```
+
+Le script installe Piper, le plugin `tts`, la voix `fr_FR-siwis`, copie [`config/tts-config`](./config/tts-config) dans `~/.claude/.tts-config` (l'ancienne config est gardée en `.bak`) et applique le [patch](#11-le-patch--message-final-seulement). Il ne refait pas ce qui est déjà en place, tu peux donc le relancer sans risque.
+
+Le reste de ce README détaille chaque étape, si tu préfères tout faire à la main.
+
+---
+
 ## Sommaire
 
 1. [Prérequis](#1-prérequis)
@@ -24,6 +38,7 @@ On s'appuie sur :
 8. [Choisir d'autres voix](#8-choisir-dautres-voix)
 9. [Dépannage](#9-dépannage)
 10. [Désinstaller](#10-désinstaller)
+11. [Le patch « message final seulement »](#11-le-patch--message-final-seulement)
 
 ---
 
@@ -243,6 +258,26 @@ pipx uninstall piper-tts
 rm -rf ~/.local/share/piper-voices ~/.claude/.tts-config
 ```
 
+## 11. Le patch « message final seulement »
+
+Sans patch, le plugin lit **tout** ce que Claude écrit pendant un tour, y compris les petites phrases entre deux commandes (« Je regarde le fichier… »). Pendant une tâche longue, ça fait beaucoup de bruit.
+
+Le fichier [`patches/tts-0.1.6.patch`](./patches/tts-0.1.6.patch) change deux choses :
+
+- `hooks/speak.sh` : ne lit que le **dernier message** du tour, c'est-à-dire le résumé final ;
+- `scripts/lib.sh` : avant la lecture, retire les liens, les adresses web, les chemins de fichiers (`~/…`, `/home/…`, `/tmp/…`), les lignes de tableau et les puces.
+
+Avec `SPEAK_MODE=full` (la config du dépôt), tu entends donc tout le résumé final, et rien d'autre.
+
+Le patch n'est testé que sur la version **0.1.6** du plugin. Une mise à jour du plugin installe une nouvelle version sans le patch : relance alors `./install.sh --patch`. Si la version a changé, le script le signale et ne touche à rien.
+
+Pour annuler le patch, remets les fichiers d'origine (sauvegardés en `.orig`) :
+
+```bash
+cd ~/.claude/plugins/cache/cadrianmae-claude-marketplace/tts/0.1.6
+mv hooks/speak.sh.orig hooks/speak.sh && mv scripts/lib.sh.orig scripts/lib.sh
+```
+
 ---
 
 ## Crédits
@@ -250,7 +285,7 @@ rm -rf ~/.local/share/piper-voices ~/.claude/.tts-config
 - Plugin `tts` : [cadrianmae/claude-marketplace](https://github.com/cadrianmae/claude-marketplace) (MIT)
 - Moteur : [Piper](https://github.com/rhasspy/piper) ; voix : [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). Chaque voix a sa propre licence, indiquée dans sa fiche Hugging Face.
 
-Ce dépôt ne contient que de la documentation et un petit script ; il ne redistribue ni le plugin ni les voix.
+Ce dépôt contient de la documentation, des scripts d'installation, une config et un patch de quelques lignes ; il ne redistribue ni le plugin ni les voix.
 
 ## Licence
 
