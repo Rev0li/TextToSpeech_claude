@@ -1,0 +1,26 @@
+--- a/hooks/speak.sh
++++ b/hooks/speak.sh
+@@ -103,7 +103,7 @@
+                 .
+               else empty end)
+         | map(select(length > 0))
+-        | join("\n\n")
++        | last // empty   # rev0li : seulement le message final du tour
+     ' "$transcript_path" 2>/dev/null
+ )"
+ 
+--- a/scripts/lib.sh
++++ b/scripts/lib.sh
+@@ -314,7 +314,11 @@
+         /^```/ { in_fence = !in_fence; next }
+         /^~~~/ { in_fence = !in_fence; next }
+         !in_fence { print }
+-    ' | {
++    ' | sed -E -e '/^[[:space:]]*\|/d' \
++            -e 's/\[([^]]*)\]\([^)]*\)/\1/g' \
++            -e 's#https?://[^[:space:])]+##g' \
++            -e 's#`?(~|/home|/tmp)/[^[:space:]`]*`?##g' \
++            -e 's/^[[:space:]]*[-*] //' | {
+         if command -v pandoc >/dev/null 2>&1; then
+             pandoc -f markdown -t plain 2>/dev/null
+         else
