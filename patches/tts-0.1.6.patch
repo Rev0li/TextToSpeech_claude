@@ -28,7 +28,44 @@
  
  # Read the hook JSON input from stdin. Claude Code passes transcript
  # metadata here. We need the transcript path to extract the last
-@@ -103,11 +104,13 @@
+@@ -44,6 +45,19 @@
+     exit 0
+ fi
+ 
++# rev0li : Claude Code récent donne directement le texte du dernier message
++# (last_assistant_message). On le préfère à la transcription, qui peut ne
++# pas encore contenir la réponse finale quand le hook démarre.
++if command -v jq >/dev/null 2>&1; then
++    TTS_SESSION="$(printf '%s' "$HOOK_JSON" | jq -r '.session_id // empty' 2>/dev/null)"
++    export TTS_SESSION
++    latest_text="$(printf '%s' "$HOOK_JSON" | jq -r '.last_assistant_message // empty | strings' 2>/dev/null)"
++    if [ -n "$latest_text" ]; then
++        tts_speak "$latest_text"
++        exit 0
++    fi
++fi
++
+ # Extract transcript_path. jq is widely available; fall back to sed.
+ if command -v jq >/dev/null 2>&1; then
+     transcript_path="$(printf '%s' "$HOOK_JSON" | jq -r '.transcript_path // empty' 2>/dev/null)"
+@@ -68,6 +82,16 @@
+     exit 0
+ fi
+ 
++# rev0li : secours pour les anciennes versions de Claude Code. On attend
++# (3 s max) que la dernière entrée assistant de la transcription soit du
++# texte, c'est-à-dire que la réponse finale y soit écrite.
++for _ in $(seq 15); do
++    jq -es '[.[] | select(.message.role == "assistant")] | last
++            | .message.content | type == "array" and any(.[]; .type == "text")' \
++        "$transcript_path" >/dev/null 2>&1 && break
++    sleep 0.2
++done
++
+ # Extract all assistant text from the current turn.
+ #
+ # A single agent turn can span many JSONL lines: text → thinking → tool_use
+@@ -103,7 +127,7 @@
                  .
                else empty end)
          | map(select(length > 0))
@@ -37,12 +74,6 @@
      ' "$transcript_path" 2>/dev/null
  )"
  
- [ -z "$latest_text" ] && exit 0
- 
-+TTS_SESSION="$(printf '%s' "$HOOK_JSON" | jq -r '.session_id // empty' 2>/dev/null)"
-+export TTS_SESSION
- tts_speak "$latest_text"
- exit 0
 --- a/scripts/lib.sh
 +++ b/scripts/lib.sh
 @@ -314,7 +314,11 @@

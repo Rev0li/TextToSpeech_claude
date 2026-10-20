@@ -266,7 +266,7 @@ Autre souci sans patch : avec plusieurs terminaux Claude Code, si deux réponses
 
 Le fichier [`patches/tts-0.1.6.patch`](./patches/tts-0.1.6.patch) change donc ceci :
 
-- `hooks/speak.sh` : ne lit que le **dernier message** du tour, c'est-à-dire le résumé final ;
+- `hooks/speak.sh` : ne lit que le **dernier message** du tour, c'est-à-dire le résumé final. Il le prend directement dans ce que Claude Code transmet au hook (`last_assistant_message`) ; avec une version de Claude Code trop ancienne pour fournir ce champ, il le cherche dans la transcription, en attendant jusqu'à 3 s que la réponse y soit écrite ;
 - `scripts/lib.sh` : avant la lecture, retire les liens, les adresses web, les chemins de fichiers (`~/…`, `/home/…`, `/tmp/…`), les lignes de tableau et les puces ;
 - **file d'attente** : toutes les lectures, de tous les terminaux, passent l'une après l'autre (verrou `flock` sur `$XDG_RUNTIME_DIR/claude-tts.lock`). Le carillon sonne au début de chaque lecture, quand son tour arrive, ce qui permet de repérer le passage d'une réponse à l'autre ;
 - `hooks/interrupt.sh` : taper un message ne coupe que les réponses **de ce terminal** (en cours ou en attente) ; celles des autres terminaux restent dans la file. `/tts stop` coupe tout et vide la file.
