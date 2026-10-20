@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installe la lecture vocale en français des réponses de Claude Code :
 # Piper, le plugin tts (version testée 0.1.6), une voix française,
-# la config du dépôt et le patch « message final seulement ».
+# la config du dépôt et le patch (message final seulement, file d'attente).
 #
 # Usage : ./install.sh            installation complète
 #         ./install.sh --patch    ré-applique seulement le patch (après une mise à jour du plugin)
@@ -27,6 +27,11 @@ apply_patch() {
         echo "Déjà appliqué."
         return 0
     fi
+    # Une ancienne version du patch est peut-être en place : on repart des originaux.
+    local f
+    for f in hooks/speak.sh hooks/interrupt.sh scripts/lib.sh; do
+        [ -f "$plugin_dir/$f.orig" ] && cp "$plugin_dir/$f.orig" "$plugin_dir/$f"
+    done
     patch -d "$plugin_dir" -p1 -b -z .orig -s < "$here/patches/tts-${plugin_version}.patch"
     echo "✓ Appliqué (originaux sauvegardés en .orig)."
 }
@@ -38,7 +43,7 @@ fi
 
 say "Prérequis"
 missing=()
-for c in paplay jq pipx patch curl; do command -v "$c" >/dev/null || missing+=("$c"); done
+for c in paplay jq pipx patch curl flock; do command -v "$c" >/dev/null || missing+=("$c"); done
 if [ ${#missing[@]} -gt 0 ]; then
     warn "Manquant : ${missing[*]}"
     echo "Fedora : sudo dnf install -y pulseaudio-utils jq pipx patch curl"

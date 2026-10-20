@@ -1,6 +1,34 @@
+--- a/hooks/interrupt.sh
++++ b/hooks/interrupt.sh
+@@ -15,5 +15,12 @@
+ [ "$TTS_ENABLED" = "true" ] || exit 0
+ [ "$TTS_INTERRUPT_ON_TYPE" = "true" ] || exit 0
+ 
+-tts_kill_inflight
++# rev0li : ne coupe que ce terminal ; les réponses des autres terminaux
++# restent dans la file. Sans session_id, on coupe tout comme avant.
++session_id="$(jq -r '.session_id // empty' 2>/dev/null)"
++if [ -n "$session_id" ]; then
++    tts_kill_session "$session_id"
++else
++    tts_kill_inflight
++fi
+ exit 0
 --- a/hooks/speak.sh
 +++ b/hooks/speak.sh
-@@ -103,7 +103,7 @@
+@@ -29,8 +29,9 @@
+     exit 0
+ fi
+ 
+-# Play chime before speech (blocks until done so chime finishes first).
+-tts_play_chime
++# rev0li : le carillon est joué par tts_speak une fois son tour venu dans
++# la file, pas ici (sinon il sonnerait par-dessus un autre terminal).
++export TTS_WITH_CHIME=1
+ 
+ # Read the hook JSON input from stdin. Claude Code passes transcript
+ # metadata here. We need the transcript path to extract the last
+@@ -103,11 +104,13 @@
                  .
                else empty end)
          | map(select(length > 0))
@@ -9,6 +37,12 @@
      ' "$transcript_path" 2>/dev/null
  )"
  
+ [ -z "$latest_text" ] && exit 0
+ 
++TTS_SESSION="$(printf '%s' "$HOOK_JSON" | jq -r '.session_id // empty' 2>/dev/null)"
++export TTS_SESSION
+ tts_speak "$latest_text"
+ exit 0
 --- a/scripts/lib.sh
 +++ b/scripts/lib.sh
 @@ -314,7 +314,11 @@
@@ -24,3 +58,58 @@
          if command -v pandoc >/dev/null 2>&1; then
              pandoc -f markdown -t plain 2>/dev/null
          else
+@@ -404,12 +408,25 @@
+     piper_cmd+=" --sentence-silence $TTS_SENTENCE_SILENCE"
+     piper_cmd+=" --output-raw 2>/dev/null"
+ 
++    # rev0li : file d'attente. Toutes les lectures, tous terminaux confondus,
++    # prennent le même verrou : elles passent l'une après l'autre au lieu de
++    # se superposer. Le carillon (TTS_WITH_CHIME=1) est joué une fois le
++    # verrou obtenu. $0 porte l'id de session, pour tts_kill_session.
++    local lock="${XDG_RUNTIME_DIR:-/tmp}/claude-tts.lock"
++    local chime=""
++    if [ "${TTS_WITH_CHIME:-}" = "1" ] && [ "$TTS_CHIME_ENABLED" = "true" ]; then
++        chime="$(_tts_sounds_dir)/${TTS_CHIME_SOUND}.wav"
++    fi
++
+     # Detach via setsid so audio survives Claude Code's process group.
+     setsid bash -c "
++        exec 9>\"\$2\"
++        flock 9
++        [ -f \"\$3\" ] && paplay \"\$3\" 2>/dev/null
+         printf '%s' \"\$1\" \
+             | $piper_cmd \
+             | paplay --raw --format=s16le --rate=22050 --channels=1 --volume='$TTS_VOLUME' 2>/dev/null
+-    " _ "$processed" </dev/null >/dev/null 2>&1 &
++    " "tts-speak:${TTS_SESSION:-manual}" "$processed" "$lock" "$chime" </dev/null >/dev/null 2>&1 &
+     disown 2>/dev/null || true
+ }
+ 
+@@ -485,5 +502,27 @@
+ # Kill any in-flight paplay that matches our speak invocation.
+ # Idempotent: pkill on nothing is a no-op.
+ tts_kill_inflight() {
++    _tts_kill_tagged "tts-speak:"
+     pkill -f "paplay --raw --format=s16le --rate=22050" 2>/dev/null || true
+ }
++
++# rev0li : coupe seulement les lectures d'une session (en cours ou en
++# attente dans la file), sans toucher à celles des autres terminaux.
++tts_kill_session() {
++    [ -n "$1" ] || return 0
++    _tts_kill_tagged "tts-speak:$1"
++}
++
++# Tue le groupe de processus (setsid) de chaque lecture dont $0 commence
++# par $1 : flock en attente, piper et paplay partent avec. On vérifie
++# argv[3] (bash -c SCRIPT $0) pour ne viser que nos propres lectures.
++_tts_kill_tagged() {
++    local pid args
++    for pid in $(pgrep -x bash 2>/dev/null); do
++        args=()
++        mapfile -d '' -t args 2>/dev/null < "/proc/$pid/cmdline"
++        case "${args[3]:-}" in "$1"*) ;; *) continue ;; esac
++        [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ] || continue
++        kill -- "-$pid" 2>/dev/null || true
++    done
++}
