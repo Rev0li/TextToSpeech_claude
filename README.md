@@ -20,7 +20,7 @@ cd TextToSpeech_claude
 ./install.sh
 ```
 
-Le script installe Piper, le plugin `tts`, la voix `fr_FR-siwis`, copie [`config/tts-config`](./config/tts-config) dans `~/.claude/.tts-config` (l'ancienne config est gardée en `.bak`) et applique le [patch](#11-le-patch--message-final-seulement). Il ne refait pas ce qui est déjà en place, tu peux donc le relancer sans risque.
+Le script installe Piper, le plugin `tts`, la voix `fr_FR-siwis`, copie [`config/tts-config`](./config/tts-config) dans `~/.claude/.tts-config` (l'ancienne config est gardée en `.bak`) et applique le [patch](#11-le-patch-message-final-file-dattente). Il ne refait pas ce qui est déjà en place, tu peux donc le relancer sans risque.
 
 Le reste de ce README détaille chaque étape, si tu préfères tout faire à la main.
 
@@ -38,7 +38,7 @@ Le reste de ce README détaille chaque étape, si tu préfères tout faire à la
 8. [Choisir d'autres voix](#8-choisir-dautres-voix)
 9. [Dépannage](#9-dépannage)
 10. [Désinstaller](#10-désinstaller)
-11. [Le patch « message final seulement »](#11-le-patch--message-final-seulement)
+11. [Le patch (message final, file d'attente)](#11-le-patch-message-final-file-dattente)
 
 ---
 
@@ -206,7 +206,7 @@ Dans Claude Code, lance `/tts test`.
 | `/tts config CLÉ=valeur` | modifie la config (ex. `/tts config SPEAK_MODE=full`) |
 | `/tts stop` | ne lit pas la prochaine réponse |
 
-Pour couper une lecture en cours, tape simplement ton message suivant.
+Pour couper une lecture en cours, tape simplement ton message suivant. Avec plusieurs terminaux, ça ne coupe que les réponses du terminal où tu tapes ; `/tts stop` coupe tout et vide la file d'attente (voir [section 11](#11-le-patch-message-final-file-dattente)).
 
 ## 8. Choisir d'autres voix
 
@@ -258,24 +258,30 @@ pipx uninstall piper-tts
 rm -rf ~/.local/share/piper-voices ~/.claude/.tts-config
 ```
 
-## 11. Le patch « message final seulement »
+## 11. Le patch (message final, file d'attente)
 
 Sans patch, le plugin lit **tout** ce que Claude écrit pendant un tour, y compris les petites phrases entre deux commandes (« Je regarde le fichier… »). Pendant une tâche longue, ça fait beaucoup de bruit.
 
-Le fichier [`patches/tts-0.1.6.patch`](./patches/tts-0.1.6.patch) change deux choses :
+Autre souci sans patch : avec plusieurs terminaux Claude Code, si deux réponses arrivent en même temps, les deux voix se superposent et on ne comprend plus rien.
+
+Le fichier [`patches/tts-0.1.6.patch`](./patches/tts-0.1.6.patch) change donc ceci :
 
 - `hooks/speak.sh` : ne lit que le **dernier message** du tour, c'est-à-dire le résumé final ;
-- `scripts/lib.sh` : avant la lecture, retire les liens, les adresses web, les chemins de fichiers (`~/…`, `/home/…`, `/tmp/…`), les lignes de tableau et les puces.
+- `scripts/lib.sh` : avant la lecture, retire les liens, les adresses web, les chemins de fichiers (`~/…`, `/home/…`, `/tmp/…`), les lignes de tableau et les puces ;
+- **file d'attente** : toutes les lectures, de tous les terminaux, passent l'une après l'autre (verrou `flock` sur `$XDG_RUNTIME_DIR/claude-tts.lock`). Le carillon sonne au début de chaque lecture, quand son tour arrive, ce qui permet de repérer le passage d'une réponse à l'autre ;
+- `hooks/interrupt.sh` : taper un message ne coupe que les réponses **de ce terminal** (en cours ou en attente) ; celles des autres terminaux restent dans la file. `/tts stop` coupe tout et vide la file.
 
 Avec `SPEAK_MODE=full` (la config du dépôt), tu entends donc tout le résumé final, et rien d'autre.
 
-Le patch n'est testé que sur la version **0.1.6** du plugin. Une mise à jour du plugin installe une nouvelle version sans le patch : relance alors `./install.sh --patch`. Si la version a changé, le script le signale et ne touche à rien.
+Le patch n'est testé que sur la version **0.1.6** du plugin. Une mise à jour du plugin installe une nouvelle version sans le patch : relance alors `./install.sh --patch`. Si la version a changé, le script le signale et ne touche à rien. La même commande remplace aussi une ancienne version du patch par la nouvelle.
 
 Pour annuler le patch, remets les fichiers d'origine (sauvegardés en `.orig`) :
 
 ```bash
 cd ~/.claude/plugins/cache/cadrianmae-claude-marketplace/tts/0.1.6
-mv hooks/speak.sh.orig hooks/speak.sh && mv scripts/lib.sh.orig scripts/lib.sh
+for f in hooks/speak.sh hooks/interrupt.sh scripts/lib.sh; do
+  [ -f "$f.orig" ] && mv "$f.orig" "$f"
+done
 ```
 
 ---
