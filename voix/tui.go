@@ -56,23 +56,26 @@ type tick time.Time
 type etatKyutai struct{ pret bool }
 
 type modele struct {
-	cartes     []*carte
-	sel        int
-	suivre     bool
-	noms       *Noms
-	travaux    chan<- travail
-	cps        float64 // caractères dits par seconde, appris au fil des réponses
-	lecture    *lecture
-	pause      bool
-	renommage  bool
-	saisie     textinput.Model
-	largeur    int
-	hauteur    int
-	kyutai     bool
-	ev         ecranVoix // écran « Voix » (touche v)
-	essai      *lecture  // lecture d\'un essai de voix
-	ticks      int
-	prochainID int
+	cartes        []*carte
+	sel           int
+	suivre        bool
+	noms          *Noms
+	travaux       chan<- travail
+	cps           float64 // caractères dits par seconde, appris au fil des réponses
+	lecture       *lecture
+	pause         bool
+	renommage     bool
+	saisie        textinput.Model
+	largeur       int
+	hauteur       int
+	kyutai        bool
+	kyutaiDebut   time.Time // lancement du serveur par claude-voix
+	annonce       string    // bandeau temporaire (Kyutai en ligne, arrêté…)
+	annonceJusqua time.Time
+	ev            ecranVoix // écran « Voix » (touche v)
+	essai         *lecture  // lecture d\'un essai de voix
+	ticks         int
+	prochainID    int
 }
 
 func nouveauModele(noms *Noms, travaux chan<- travail) *modele {
@@ -253,6 +256,32 @@ func (m *modele) basculerPause() tea.Cmd {
 	return m.lancerSuivant()
 }
 
+func (m *modele) annoncer(texte string) {
+	m.annonce, m.annonceJusqua = texte, time.Now().Add(10*time.Second)
+}
+
+// basculerKyutai (touche k) : arrête le serveur s'il tourne, sinon le démarre.
+func (m *modele) basculerKyutai() tea.Cmd {
+	cfg := lireConfig()
+	if cfg.KyutaiScript == "" {
+		m.annoncer("Kyutai n'est pas installé ici (./install.sh --kyutai)")
+		return nil
+	}
+	if m.kyutai || kyutaiDemarre.Load() {
+		kyutaiDemarre.Store(false)
+		m.annoncer("Arrêt de Kyutai…")
+		return func() tea.Msg {
+			arreterKyutai(cfg)
+			return verifierKyutai()
+		}
+	}
+	if demarrerKyutai(cfg) {
+		m.kyutaiDebut = time.Now()
+		m.annoncer("Démarrage de Kyutai…")
+	}
+	return nil
+}
+
 func (m *modele) Quitter() {
 	if m.lecture != nil {
 		m.lecture.arreter()
@@ -281,13 +310,27 @@ func (m *modele) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tick:
 		m.ticks++
 		cmds := []tea.Cmd{prochainTick()}
-		if m.ticks%10 == 0 || (kyutaiDemarre.Load() && m.ticks%2 == 0) {
+		if m.ticks%6 == 0 || (kyutaiDemarre.Load() && m.ticks%2 == 0) {
 			cmds = append(cmds, verifierKyutai)
 		}
 		cmds = append(cmds, m.lancerSuivant()) // démarrage anticipé pendant la génération
 		return m, tea.Batch(cmds...)
 
 	case etatKyutai:
+		switch {
+		case msg.pret && !m.kyutai:
+			texte := "✓ Kyutai est en ligne"
+			if !m.kyutaiDebut.IsZero() {
+				texte += fmt.Sprintf(" (prêt en %d s)", int(time.Since(m.kyutaiDebut).Seconds()))
+			}
+			m.annoncer(texte + " : les réponses seront lues avec la voix " + lireConfig().KyutaiVoix)
+		case !msg.pret && m.kyutai:
+			m.annoncer("✗ Kyutai est arrêté : la voix Piper prend le relais (touche k pour le relancer)")
+		}
+		if msg.pret {
+			kyutaiDemarre.Store(false)
+			m.kyutaiDebut = time.Time{}
+		}
 		m.kyutai = msg.pret
 		return m, nil
 
@@ -376,13 +419,13 @@ func (m *modele) touche(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d", "delete", "backspace":
 		m.supprimer()
 		return m, m.lancerSuivant()
-	case "left", "h":
+	case "left":
 		m.deplacer(-1)
-	case "right", "l":
+	case "right":
 		m.deplacer(1)
-	case "up", "k":
+	case "up":
 		m.deplacer(-m.colonnes())
-	case "down", "j":
+	case "down":
 		m.deplacer(m.colonnes())
 	case "esc":
 		m.suivre = true
@@ -401,6 +444,8 @@ func (m *modele) touche(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "v":
 		return m, m.ouvrirVoix()
+	case "k":
+		return m, m.basculerKyutai()
 	case "r":
 		if c := m.selection(); c != nil {
 			m.renommage = true
@@ -446,14 +491,16 @@ var (
 	couleurLecture = lipgloss.Color("42")
 	couleurCadre   = lipgloss.Color("240")
 
-	styleTitre   = lipgloss.NewStyle().Bold(true).Foreground(couleurSel)
-	styleDiscret = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	styleNom     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	styleLecture = lipgloss.NewStyle().Foreground(couleurLecture).Bold(true)
-	styleAttente = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	styleErreur  = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	styleAide    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	styleCarte   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	styleTitre         = lipgloss.NewStyle().Bold(true).Foreground(couleurSel)
+	styleDiscret       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	styleNom           = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	styleLecture       = lipgloss.NewStyle().Foreground(couleurLecture).Bold(true)
+	styleAttente       = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	styleErreur        = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	styleAide          = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	styleCarte         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	styleAnnonce       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(couleurLecture).Padding(0, 1)
+	styleAnnonceErreur = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("160")).Padding(0, 1)
 )
 
 func duree(d time.Duration) string {
@@ -546,6 +593,9 @@ func (m *modele) View() string {
 	moteur := styleErreur.Render("Kyutai arrêté → Piper")
 	if kyutaiDemarre.Load() && !m.kyutai {
 		moteur = styleAttente.Render("Kyutai démarre…")
+		if !m.kyutaiDebut.IsZero() {
+			moteur = styleAttente.Render(fmt.Sprintf("Kyutai démarre… %d s", int(time.Since(m.kyutaiDebut).Seconds())))
+		}
 	}
 	if m.kyutai {
 		moteur = styleLecture.Render("Kyutai prêt") + styleDiscret.Render(" ("+lireConfig().KyutaiVoix+")")
@@ -555,6 +605,13 @@ func (m *modele) View() string {
 		etatGlobal = styleAttente.Render("  ⏸ en pause")
 	}
 	b.WriteString(styleTitre.Render("🎙 claude-voix") + "   " + moteur + etatGlobal + "\n")
+	if m.annonce != "" && time.Now().Before(m.annonceJusqua) {
+		style := styleAnnonce
+		if strings.HasPrefix(m.annonce, "✗") {
+			style = styleAnnonceErreur
+		}
+		b.WriteString(style.Width(l).Render(m.annonce) + "\n")
+	}
 
 	if len(m.cartes) == 0 {
 		b.WriteString("\n" + styleDiscret.Render("  En attente des réponses de Claude Code…") + "\n")
@@ -590,7 +647,7 @@ func (m *modele) View() string {
 	if m.renommage {
 		b.WriteString(m.saisie.View() + styleAide.Render("   entrée valider · échap annuler") + "\n")
 	} else {
-		aide := "espace pause · s suivant · c tout couper · d supprimer · entrée relire · r renommer · v voix · q quitter\n" +
+		aide := "espace pause · s suivant · c tout couper · d supprimer · entrée relire · r renommer · v voix · k Kyutai · q quitter\n" +
 			"flèches choisir une carte · échap suivre la lecture"
 		b.WriteString(styleAide.Width(l).Render(aide) + "\n")
 	}

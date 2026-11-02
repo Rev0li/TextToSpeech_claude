@@ -393,6 +393,7 @@ Les cartes se rangent en une à trois colonnes selon la largeur du terminal. La 
 | `entrée` | relire la réponse de la carte choisie |
 | `r` | renommer la fenêtre de la carte choisie |
 | `v` | écran **Voix** : écouter les onze voix du menu ou, avec `tab`, les 24 autres (`entrée`) ; choisir celle qui lit les réponses (`espace`) ; la file est en pause pendant les essais |
+| `k` | arrêter ou relancer le serveur Kyutai |
 | `q` | quitter |
 
 **Le nom des fenêtres.** Chaque réponse porte le nom de la fenêtre Claude Code qui l'a écrite : au départ, le nom de son dossier (`rev0auth`, `SongSurf`…). Touche `r` pour le changer (par exemple `auth`). Le nom vaut pour cette session et pour les prochaines sessions lancées dans le même dossier. Il est gardé dans `~/.config/claude-voix/noms.json`.
@@ -404,7 +405,7 @@ Les cartes se rangent en une à trois colonnes selon la largeur du terminal. La 
 - **La lecture démarre pendant la génération.** Kyutai envoie l'audio au fil de l'eau. `claude-voix` mesure sa vitesse réelle et lance la lecture au moment où elle ne pourra plus rattraper la génération : la voix démarre bien plus tôt, sans aucune pause. Mesuré sur une GTX 1060, pour 19 s de parole : lecture lancée à 14,5 s au lieu de 28 s, tout lu à 33,7 s.
 - Supprimer une carte, ou recevoir une nouvelle réponse de la même fenêtre, arrête aussi sa génération : le serveur passe aussitôt à la réponse suivante.
 - Taper un message dans une fenêtre Claude Code coupe les réponses de cette fenêtre (comme avant). `/tts stop` coupe tout.
-- Avec Kyutai (`./install.sh --kyutai`), `claude-voix` démarre le serveur tout seul s'il est arrêté (`Kyutai démarre…`, les réponses attendent), et l'arrête en quittant pour libérer la carte graphique. Si Kyutai ne répond pas, la voix Piper prend le relais.
+- **claude-voix gère le serveur Kyutai** (`./install.sh --kyutai`) : à l'ouverture, il le démarre (`Kyutai démarre… 5 s`, les réponses attendent) ou reprend celui qui tourne déjà ; un bandeau vert annonce « Kyutai est en ligne » ; en quittant, il l'arrête pour libérer la carte graphique. La touche `k` l'arrête ou le relance. Si Kyutai ne répond pas, la voix Piper prend le relais (bandeau rouge).
 - La voix, le volume et le serveur viennent de `~/.claude/.tts-config` (`KYUTAI_VOICE`, `VOLUME`, `VOICE`…), relus à chaque réponse. L'écran `v` écrit `KYUTAI_VOICE` pour toi.
 
 **Commandes internes** (utilisées par le plugin) : `claude-voix envoyer --session ID --cwd DOSSIER < texte` et `claude-voix couper [--session ID]`.
