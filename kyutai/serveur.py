@@ -45,6 +45,7 @@ MORCEAU = 100
 # Noms courts → voix du dépôt Hugging Face kyutai/tts-voices.
 VOIX = {
     "livre": "cml-tts/fr/10087_11650_000028-0002_enhanced.wav",
+    "conteur": "cml-tts/fr/2114_1656_000053-0001_enhanced.wav",
     "developpeuse": "unmute-prod-website/developpeuse-3.wav",
     "fabien": "unmute-prod-website/fabieng-enhanced-v2.wav",
     "developpeur": "unmute-prod-website/developer-1.mp3",

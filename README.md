@@ -329,7 +329,7 @@ N'utilise pas --- ailleurs dans la partie parlée.
 
 Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `LOCALAI_TTS_VOICE=livre`.
 
-**Voix.** `livre` (par défaut, extraite d'un livre audio), `developpeuse`, `fabien`, `developpeur`. On peut aussi donner n'importe quel chemin du dépôt [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices), par exemple `cml-tts/fr/…_enhanced.wav` (140 voix françaises), sans le suffixe `.1e68beda@240.safetensors`. Une voix inconnue retombe sur la voix par défaut.
+**Voix.** `livre` (par défaut, voix féminine extraite d'un livre audio), `conteur` (voix masculine, même source), `developpeuse`, `fabien`, `developpeur`. On peut aussi donner n'importe quel chemin du dépôt [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices), par exemple `cml-tts/fr/…_enhanced.wav` (140 voix françaises), sans le suffixe `.1e68beda@240.safetensors`. Une voix inconnue retombe sur la voix par défaut.
 
 **Réglages** (variables d'environnement) : `KYUTAI_PORT` (8002), `KYUTAI_VOICE` (`livre`), `KYUTAI_DEVICE` (`cuda`), `KYUTAI_NQ` (32 ; 16 est environ 30 % plus rapide mais moins fidèle).
 
@@ -341,7 +341,7 @@ Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `
 
 - Plugin `tts` : [cadrianmae/claude-marketplace](https://github.com/cadrianmae/claude-marketplace) (MIT)
 - Moteur : [Piper](https://github.com/rhasspy/piper) ; voix : [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). Chaque voix a sa propre licence, indiquée dans sa fiche Hugging Face.
-- Voix Kyutai : modèle [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) (CC-BY 4.0), bibliothèque [moshi](https://github.com/kyutai-labs/moshi) (MIT), voix de [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) : `livre` vient du jeu [CML-TTS](https://openslr.org/146/) (CC-BY 4.0), les trois autres sont des enregistrements de Kyutai (CC0). Ailleurs dans ce dépôt de voix, certains jeux (`expresso/`, `ears/`) sont **non commerciaux** ; la licence de chaque dossier est indiquée dans son README.
+- Voix Kyutai : modèle [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) (CC-BY 4.0), bibliothèque [moshi](https://github.com/kyutai-labs/moshi) (MIT), voix de [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) : `livre` et `conteur` viennent du jeu [CML-TTS](https://openslr.org/146/) (CC-BY 4.0), les trois autres sont des enregistrements de Kyutai (CC0). Ailleurs dans ce dépôt de voix, certains jeux (`expresso/`, `ears/`) sont **non commerciaux** ; la licence de chaque dossier est indiquée dans son README.
 
 Ce dépôt contient de la documentation, des scripts d'installation, une config et un patch de quelques lignes ; il ne redistribue ni le plugin ni les voix.
 
