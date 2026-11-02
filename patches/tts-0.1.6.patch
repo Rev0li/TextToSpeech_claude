@@ -28,7 +28,7 @@
  
  # Read the hook JSON input from stdin. Claude Code passes transcript
  # metadata here. We need the transcript path to extract the last
-@@ -44,6 +45,19 @@
+@@ -44,6 +45,21 @@
      exit 0
  fi
  
@@ -38,6 +38,8 @@
 +if command -v jq >/dev/null 2>&1; then
 +    TTS_SESSION="$(printf '%s' "$HOOK_JSON" | jq -r '.session_id // empty' 2>/dev/null)"
 +    export TTS_SESSION
++    TTS_CWD="$(printf '%s' "$HOOK_JSON" | jq -r '.cwd // empty' 2>/dev/null)"
++    export TTS_CWD
 +    latest_text="$(printf '%s' "$HOOK_JSON" | jq -r '.last_assistant_message // empty | strings' 2>/dev/null)"
 +    if [ -n "$latest_text" ]; then
 +        tts_speak "$latest_text"
@@ -48,7 +50,7 @@
  # Extract transcript_path. jq is widely available; fall back to sed.
  if command -v jq >/dev/null 2>&1; then
      transcript_path="$(printf '%s' "$HOOK_JSON" | jq -r '.transcript_path // empty' 2>/dev/null)"
-@@ -68,6 +82,16 @@
+@@ -68,6 +84,16 @@
      exit 0
  fi
  
@@ -65,7 +67,7 @@
  # Extract all assistant text from the current turn.
  #
  # A single agent turn can span many JSONL lines: text → thinking → tool_use
-@@ -103,7 +127,7 @@
+@@ -103,7 +129,7 @@
                  .
                else empty end)
          | map(select(length > 0))
@@ -76,7 +78,7 @@
  
 --- a/scripts/lib.sh
 +++ b/scripts/lib.sh
-@@ -66,6 +66,12 @@
+@@ -66,6 +66,15 @@
  tts_default_sentence_silence="0.0"
  tts_default_chime_enabled="true"
  tts_default_chime_sound="soft-chime"
@@ -86,10 +88,13 @@
 +tts_default_kyutai_url="http://127.0.0.1:8002"
 +tts_default_kyutai_voice="livre"
 +tts_default_kyutai_mode="complet"
++# rev0li : GESTIONNAIRE=true → les réponses partent au gestionnaire claude-voix
++# (TextToSpeech_claude/voix) ; s'il est fermé, rien n'est lu.
++tts_default_gestionnaire="false"
  
  # Load config into shell variables. Missing keys fall back to defaults.
  # Sets: TTS_VOICE, TTS_VOLUME, TTS_SPEAK_MODE, TTS_MAX_CHARS,
-@@ -90,6 +96,10 @@
+@@ -90,6 +99,11 @@
      TTS_SENTENCE_SILENCE="$tts_default_sentence_silence"
      TTS_CHIME_ENABLED="$tts_default_chime_enabled"
      TTS_CHIME_SOUND="$tts_default_chime_sound"
@@ -97,10 +102,11 @@
 +    TTS_KYUTAI_URL="$tts_default_kyutai_url"
 +    TTS_KYUTAI_VOICE="$tts_default_kyutai_voice"
 +    TTS_KYUTAI_MODE="$tts_default_kyutai_mode"
++    TTS_GESTIONNAIRE="$tts_default_gestionnaire"
  
      [ -f "$cfg" ] || return 0
  
-@@ -114,6 +124,10 @@
+@@ -114,6 +128,11 @@
              SENTENCE_SILENCE) TTS_SENTENCE_SILENCE="$value" ;;
              CHIME_ENABLED) TTS_CHIME_ENABLED="$value" ;;
              CHIME_SOUND) TTS_CHIME_SOUND="$value" ;;
@@ -108,10 +114,11 @@
 +            KYUTAI_URL) TTS_KYUTAI_URL="$value" ;;
 +            KYUTAI_VOICE) TTS_KYUTAI_VOICE="$value" ;;
 +            KYUTAI_MODE) TTS_KYUTAI_MODE="$value" ;;
++            GESTIONNAIRE) TTS_GESTIONNAIRE="$value" ;;
          esac
      done < "$cfg"
  }
-@@ -310,11 +324,18 @@
+@@ -310,11 +329,18 @@
  tts_strip_markdown() {
      # Remove fenced code blocks first (```...``` and ~~~...~~~).
      # Done with awk so we can handle multi-line blocks regardless of tool.
@@ -131,7 +138,7 @@
          if command -v pandoc >/dev/null 2>&1; then
              pandoc -f markdown -t plain 2>/dev/null
          else
-@@ -352,12 +373,15 @@
+@@ -352,12 +378,15 @@
  
      [ -z "$text" ] && return 0
  
@@ -150,7 +157,21 @@
  
      # Apply speak mode. 'full' is a no-op. 'truncate' and 'summary' are
      # both capped at MAX_CHARS. 'summary' falls back to truncate silently
-@@ -404,12 +428,54 @@
+@@ -390,6 +419,13 @@
+ 
+     [ -z "$processed" ] && return 0
+ 
++    # rev0li : avec le gestionnaire, c'est lui qui génère et lit. Fermé → rien.
++    if [ "$TTS_GESTIONNAIRE" = "true" ]; then
++        printf '%s' "$processed" | _tts_voix envoyer \
++            --session "${TTS_SESSION:-manuel}" --cwd "${TTS_CWD:-$PWD}" >/dev/null 2>&1
++        return 0
++    fi
++
+     # Build the piper invocation. Always pass --cuda so piper uses GPU
+     # when CUDAExecutionProvider is available in onnxruntime; it falls
+     # back to CPU gracefully with a stderr warning if CUDA is absent.
+@@ -404,12 +440,54 @@
      piper_cmd+=" --sentence-silence $TTS_SENTENCE_SILENCE"
      piper_cmd+=" --output-raw 2>/dev/null"
  
@@ -209,10 +230,11 @@
      disown 2>/dev/null || true
  }
  
-@@ -485,5 +551,28 @@
+@@ -485,5 +563,38 @@
  # Kill any in-flight paplay that matches our speak invocation.
  # Idempotent: pkill on nothing is a no-op.
  tts_kill_inflight() {
++    _tts_voix couper >/dev/null 2>&1
 +    _tts_kill_tagged "tts-speak:"
      pkill -f "paplay --raw --format=s16le --rate=22050" 2>/dev/null || true
 +    pkill -f "paplay --raw --format=s16le --rate=24000" 2>/dev/null || true
@@ -222,7 +244,16 @@
 +# attente dans la file), sans toucher à celles des autres terminaux.
 +tts_kill_session() {
 +    [ -n "$1" ] || return 0
++    _tts_voix couper --session "$1" >/dev/null 2>&1
 +    _tts_kill_tagged "tts-speak:$1"
++}
++
++# rev0li : appelle le gestionnaire claude-voix s'il est installé (sinon échec silencieux).
++_tts_voix() {
++    local bin
++    bin="$(command -v claude-voix 2>/dev/null || echo "$HOME/.local/bin/claude-voix")"
++    [ -x "$bin" ] || return 1
++    "$bin" "$@"
 +}
 +
 +# Tue le groupe de processus (setsid) de chaque lecture dont $0 commence
