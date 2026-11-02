@@ -72,3 +72,33 @@ func dossierExecution() string {
 func cheminSocket() string {
 	return filepath.Join(dossierExecution(), "claude-voix.sock")
 }
+
+// ecrireConfig remplace (ou ajoute) CLÉ=valeur dans ~/.claude/.tts-config, sans toucher au reste.
+func ecrireConfig(cle, valeur string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	chemin := filepath.Join(home, ".claude", ".tts-config")
+	data, err := os.ReadFile(chemin)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	lignes := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(data) == 0 {
+		lignes = nil
+	}
+	trouve := false
+	for i, l := range lignes {
+		if strings.HasPrefix(l, cle+"=") {
+			lignes[i], trouve = cle+"="+valeur, true
+		}
+	}
+	if !trouve {
+		lignes = append(lignes, cle+"="+valeur)
+	}
+	if err := os.MkdirAll(filepath.Dir(chemin), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(chemin, []byte(strings.Join(lignes, "\n")+"\n"), 0o600)
+}

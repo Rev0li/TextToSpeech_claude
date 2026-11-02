@@ -69,6 +69,8 @@ type modele struct {
 	largeur    int
 	hauteur    int
 	kyutai     bool
+	ev         ecranVoix // écran « Voix » (touche v)
+	essai      *lecture  // lecture d\'un essai de voix
 	ticks      int
 	prochainID int
 }
@@ -255,6 +257,9 @@ func (m *modele) Quitter() {
 	if m.lecture != nil {
 		m.lecture.arreter()
 	}
+	if m.essai != nil {
+		m.essai.arreter()
+	}
 	for _, c := range m.cartes {
 		if c.annuler != nil {
 			c.annuler()
@@ -265,6 +270,9 @@ func (m *modele) Quitter() {
 // ---- mise à jour -----------------------------------------------------------
 
 func (m *modele) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if cmd, traite := m.majVoix(msg); traite {
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.largeur, m.hauteur = msg.Width, msg.Height
@@ -330,6 +338,9 @@ func (m *modele) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.lancerSuivant()
 
 	case tea.KeyMsg:
+		if m.ev.ouvert {
+			return m.toucheVoix(msg)
+		}
 		if m.renommage {
 			return m.toucheRenommage(msg)
 		}
@@ -388,6 +399,8 @@ func (m *modele) touche(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.jouer(c)
 			}
 		}
+	case "v":
+		return m, m.ouvrirVoix()
 	case "r":
 		if c := m.selection(); c != nil {
 			m.renommage = true
@@ -525,6 +538,9 @@ func (m *modele) rendreCarte(c *carte, largeur int, choisie bool) string {
 
 func (m *modele) View() string {
 	l := max(m.largeur, largeurCarteMin)
+	if m.ev.ouvert {
+		return m.vueVoix(l)
+	}
 	var b strings.Builder
 
 	moteur := styleErreur.Render("Kyutai arrêté → Piper")
@@ -574,7 +590,7 @@ func (m *modele) View() string {
 	if m.renommage {
 		b.WriteString(m.saisie.View() + styleAide.Render("   entrée valider · échap annuler") + "\n")
 	} else {
-		aide := "espace pause · s suivant · c tout couper · d supprimer · entrée relire · r renommer · q quitter\n" +
+		aide := "espace pause · s suivant · c tout couper · d supprimer · entrée relire · r renommer · v voix · q quitter\n" +
 			"flèches choisir une carte · échap suivre la lecture"
 		b.WriteString(styleAide.Width(l).Render(aide) + "\n")
 	}

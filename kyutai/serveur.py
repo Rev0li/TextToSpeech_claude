@@ -1,7 +1,7 @@
 """Serveur local de synthèse vocale Kyutai TTS, compatible avec l'API OpenAI.
 
     POST /v1/audio/speech   {"input": "...", "voice": "livre", "response_format": "wav" | "pcm"}
-    GET  /v1/voices         voix courtes connues
+    GET  /v1/voices         les cinq voix proposées (nom, genre, description)
     GET  /health
 
 - `wav` : fichier WAV complet (PCM 16 bits, 24 kHz, mono), rendu une fois le texte généré.
@@ -48,14 +48,17 @@ MAX_CORPS = 64 * 1024
 PREMIER_MORCEAU = 30
 MORCEAU = 100
 
-# Noms courts → voix du dépôt Hugging Face kyutai/tts-voices.
-VOIX = {
-    "livre": "cml-tts/fr/10087_11650_000028-0002_enhanced.wav",
-    "conteur": "cml-tts/fr/2114_1656_000053-0001_enhanced.wav",
-    "developpeuse": "unmute-prod-website/developpeuse-3.wav",
-    "fabien": "unmute-prod-website/fabieng-enhanced-v2.wav",
-    "developpeur": "unmute-prod-website/developer-1.mp3",
+# Les cinq voix proposées (toutes du jeu CML-TTS, livres audio, licence CC-BY 4.0) :
+# nom court → (chemin dans le dépôt Hugging Face kyutai/tts-voices, genre, description).
+# N'importe quel autre chemin du dépôt reste utilisable dans « voice ».
+VOIX_DETAILS = {
+    "livre": ("cml-tts/fr/10087_11650_000028-0002_enhanced.wav", "femme", "douce, posée"),
+    "lectrice": ("cml-tts/fr/5830_4703_000037-0001_enhanced.wav", "femme", "plus claire"),
+    "conteur": ("cml-tts/fr/2114_1656_000053-0001_enhanced.wav", "homme", "chaleureuse"),
+    "narrateur": ("cml-tts/fr/1406_1028_000009-0003_enhanced.wav", "homme", "grave"),
+    "recitant": ("cml-tts/fr/4937_3731_000004-0001_enhanced.wav", "homme", "plus claire"),
 }
+VOIX = {nom: chemin for nom, (chemin, _, _) in VOIX_DETAILS.items()}
 VOIX_DEFAUT = os.environ.get("KYUTAI_VOICE", "livre")
 
 
@@ -189,7 +192,11 @@ class Gestionnaire(BaseHTTPRequestHandler):
         if self.path == "/health":
             self.repondre_json(200, {"status": "ok"})
         elif self.path in ("/v1/voices", "/v1/audio/voices"):
-            self.repondre_json(200, {"voices": list(VOIX), "default": VOIX_DEFAUT})
+            details = [
+                {"nom": nom, "genre": genre, "description": description}
+                for nom, (_, genre, description) in VOIX_DETAILS.items()
+            ]
+            self.repondre_json(200, {"voices": list(VOIX), "default": VOIX_DEFAUT, "details": details})
         elif self.path == "/v1/models":
             self.repondre_json(200, {"object": "list", "data": [{"id": "kyutai-tts", "object": "model"}]})
         else:
