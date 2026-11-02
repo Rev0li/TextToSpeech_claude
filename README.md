@@ -3,7 +3,7 @@
 Faire lire à voix haute, **en français**, les réponses de [Claude Code](https://claude.com/claude-code), en local et hors ligne.
 
 On s'appuie sur :
-- le plugin [`tts`](https://github.com/cadrianmae/claude-marketplace) de **cadrianmae**, qui lit chaque réponse de Claude et s'arrête dès que tu tapes un nouveau message ;
+- le plugin [`tts`](https://github.com/cadrianmae/claude-marketplace) de **cadrianmae**, qui lit chaque réponse de Claude (et peut s'arrêter dès que tu tapes un nouveau message, réglage `INTERRUPT_ON_TYPE`) ;
 - [Piper](https://github.com/rhasspy/piper), un moteur de synthèse vocale libre qui tourne sur ta machine (aucune donnée n'est envoyée en ligne) ;
 - une voix française Piper, `siwis` ou `upmc`.
 
@@ -169,7 +169,7 @@ Tu peux aussi le faire depuis Claude Code, avec `/tts auto on` puis `/tts voice 
 | `MAX_CHARS` | nombre | nombre maximal de caractères lus (modes `truncate` et `summary`) |
 | `VOLUME` | 0 – 65536 | volume, qu'on peut seulement **baisser** : au-dessus de la valeur par défaut, le son sature |
 | `SPEED` | 0.1 – 3.0 | vitesse : **en dessous de 1.0 c'est plus rapide**, au-dessus c'est plus lent |
-| `INTERRUPT_ON_TYPE` | `true` / `false` | arrête la lecture dès que tu tapes un message |
+| `INTERRUPT_ON_TYPE` | `true` / `false` | arrête la lecture dès que tu tapes un message (`false` dans la config du dépôt : la lecture continue) |
 | `CHIME_ENABLED` / `CHIME_SOUND` | `true`/`false`, `soft-chime`/`bell`/`pip`/`hum` | petit son joué avant chaque lecture |
 
 **Modes de lecture :**
@@ -404,7 +404,7 @@ Les cartes se rangent en une à trois colonnes selon la largeur du terminal. La 
 - Les cartes sont lues dans l'ordre d'arrivée de leur réponse. La suivante est générée pendant que la précédente est lue.
 - **La lecture démarre pendant la génération.** Kyutai envoie l'audio au fil de l'eau. `claude-voix` mesure sa vitesse réelle et lance la lecture au moment où elle ne pourra plus rattraper la génération : la voix démarre bien plus tôt, sans aucune pause. Mesuré sur une GTX 1060, pour 19 s de parole : lecture lancée à 14,5 s au lieu de 28 s, tout lu à 33,7 s.
 - Supprimer une carte, ou recevoir une nouvelle réponse de la même fenêtre, arrête aussi sa génération : le serveur passe aussitôt à la réponse suivante.
-- Taper un message dans une fenêtre Claude Code coupe les réponses de cette fenêtre (comme avant). `/tts stop` coupe tout.
+- Taper un message dans une fenêtre Claude Code **ne coupe pas** la lecture (`INTERRUPT_ON_TYPE=false`, la config du dépôt). Quand la nouvelle réponse arrive, elle remplace l'ancienne dans sa carte. Avec `INTERRUPT_ON_TYPE=true`, taper coupe tout de suite les réponses de cette fenêtre. `/tts stop` coupe tout.
 - **claude-voix gère le serveur Kyutai** (`./install.sh --kyutai`) : à l'ouverture, il le démarre (`Kyutai démarre… 5 s`, les réponses attendent) ou reprend celui qui tourne déjà ; un bandeau vert annonce « Kyutai est en ligne » ; en quittant, il l'arrête pour libérer la carte graphique. La touche `k` l'arrête ou le relance. Si Kyutai ne répond pas, la voix Piper prend le relais (bandeau rouge).
 - La voix, le volume et le serveur viennent de `~/.claude/.tts-config` (`KYUTAI_VOICE`, `VOLUME`, `VOICE`…), relus à chaque réponse. L'écran `v` écrit `KYUTAI_VOICE` pour toi.
 
