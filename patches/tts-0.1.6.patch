@@ -76,9 +76,51 @@
  
 --- a/scripts/lib.sh
 +++ b/scripts/lib.sh
-@@ -314,7 +314,11 @@
+@@ -66,6 +66,12 @@
+ tts_default_sentence_silence="0.0"
+ tts_default_chime_enabled="true"
+ tts_default_chime_sound="soft-chime"
++# rev0li : moteur de voix. « kyutai » passe par le serveur local du dépôt
++# TextToSpeech_claude (kyutai/) ; s'il ne répond pas, retour à Piper.
++tts_default_engine="piper"
++tts_default_kyutai_url="http://127.0.0.1:8002"
++tts_default_kyutai_voice="livre"
++tts_default_kyutai_mode="complet"
+ 
+ # Load config into shell variables. Missing keys fall back to defaults.
+ # Sets: TTS_VOICE, TTS_VOLUME, TTS_SPEAK_MODE, TTS_MAX_CHARS,
+@@ -90,6 +96,10 @@
+     TTS_SENTENCE_SILENCE="$tts_default_sentence_silence"
+     TTS_CHIME_ENABLED="$tts_default_chime_enabled"
+     TTS_CHIME_SOUND="$tts_default_chime_sound"
++    TTS_ENGINE="$tts_default_engine"
++    TTS_KYUTAI_URL="$tts_default_kyutai_url"
++    TTS_KYUTAI_VOICE="$tts_default_kyutai_voice"
++    TTS_KYUTAI_MODE="$tts_default_kyutai_mode"
+ 
+     [ -f "$cfg" ] || return 0
+ 
+@@ -114,6 +124,10 @@
+             SENTENCE_SILENCE) TTS_SENTENCE_SILENCE="$value" ;;
+             CHIME_ENABLED) TTS_CHIME_ENABLED="$value" ;;
+             CHIME_SOUND) TTS_CHIME_SOUND="$value" ;;
++            ENGINE) TTS_ENGINE="$value" ;;
++            KYUTAI_URL) TTS_KYUTAI_URL="$value" ;;
++            KYUTAI_VOICE) TTS_KYUTAI_VOICE="$value" ;;
++            KYUTAI_MODE) TTS_KYUTAI_MODE="$value" ;;
+         esac
+     done < "$cfg"
+ }
+@@ -310,11 +324,18 @@
+ tts_strip_markdown() {
+     # Remove fenced code blocks first (```...``` and ~~~...~~~).
+     # Done with awk so we can handle multi-line blocks regardless of tool.
++    # rev0li : une ligne « --- » (hors bloc de code) ouvre l'encart technique,
++    # affiché mais pas lu : on s'arrête là.
+     awk '
          /^```/ { in_fence = !in_fence; next }
          /^~~~/ { in_fence = !in_fence; next }
++        !in_fence && /^[[:space:]]*---+[[:space:]]*$/ { exit }
          !in_fence { print }
 -    ' | {
 +    ' | sed -E -e '/^[[:space:]]*\|/d' \
@@ -89,7 +131,26 @@
          if command -v pandoc >/dev/null 2>&1; then
              pandoc -f markdown -t plain 2>/dev/null
          else
-@@ -404,12 +408,25 @@
+@@ -352,12 +373,15 @@
+ 
+     [ -z "$text" ] && return 0
+ 
+-    if ! tts_resolve_voice "$TTS_VOICE"; then
++    # rev0li : avec ENGINE=kyutai, la voix Piper ne sert qu'en secours.
++    local voice_file="" speaker_id=""
++    if tts_resolve_voice "$TTS_VOICE"; then
++        voice_file="$TTS_RESOLVED_FILE"
++        speaker_id="$TTS_RESOLVED_SPEAKER"
++    elif [ "$TTS_ENGINE" != "kyutai" ]; then
+         echo "tts: voice '$TTS_VOICE' not found or has no such speaker" >&2
+         return 1
+     fi
+-    local voice_file="$TTS_RESOLVED_FILE"
+-    local speaker_id="$TTS_RESOLVED_SPEAKER"
+ 
+     # Apply speak mode. 'full' is a no-op. 'truncate' and 'summary' are
+     # both capped at MAX_CHARS. 'summary' falls back to truncate silently
+@@ -404,12 +428,54 @@
      piper_cmd+=" --sentence-silence $TTS_SENTENCE_SILENCE"
      piper_cmd+=" --output-raw 2>/dev/null"
  
@@ -103,26 +164,59 @@
 +        chime="$(_tts_sounds_dir)/${TTS_CHIME_SOUND}.wav"
 +    fi
 +
++    # rev0li : Kyutai si demandé et si le serveur répond, sinon Piper.
++    # KYUTAI_MODE=complet (défaut) : tout le message est généré d'abord
++    # (en dehors de la file, donc pendant la lecture précédente), puis lu
++    # d'une traite ; le carillon marque le début de la lecture.
++    # KYUTAI_MODE=flux : lecture au fil de la génération, avec des pauses
++    # entre les morceaux si la carte est plus lente que le temps réel.
++    local piper_play=":"
++    [ -n "$voice_file" ] && piper_play="printf '%s' \"\$1\" \
++            | $piper_cmd \
++            | paplay --raw --format=s16le --rate=22050 --channels=1 --volume='$TTS_VOLUME' 2>/dev/null"
++
      # Detach via setsid so audio survives Claude Code's process group.
      setsid bash -c "
-+        exec 9>\"\$2\"
-+        flock 9
-+        [ -f \"\$3\" ] && paplay \"\$3\" 2>/dev/null
-         printf '%s' \"\$1\" \
-             | $piper_cmd \
-             | paplay --raw --format=s16le --rate=22050 --channels=1 --volume='$TTS_VOLUME' 2>/dev/null
+-        printf '%s' \"\$1\" \
+-            | $piper_cmd \
+-            | paplay --raw --format=s16le --rate=22050 --channels=1 --volume='$TTS_VOLUME' 2>/dev/null
 -    " _ "$processed" </dev/null >/dev/null 2>&1 &
-+    " "tts-speak:${TTS_SESSION:-manual}" "$processed" "$lock" "$chime" </dev/null >/dev/null 2>&1 &
++        txt=\$1 lock=\$2 chime=\$3 engine=\$4 url=\$5 kv=\$6 mode=\$7
++        tour() { exec 9>\"\$lock\"; flock 9; [ -f \"\$chime\" ] && paplay \"\$chime\" 2>/dev/null; }
++        corps() { jq -n --arg t \"\$txt\" --arg v \"\$kv\" --arg f \"\$1\" '{input: \$t, voice: \$v, response_format: \$f}'; }
++        if [ \"\$engine\" = kyutai ] && curl -fs --max-time 2 \"\$url/health\" >/dev/null 2>&1; then
++            if [ \"\$mode\" = flux ]; then
++                tour
++                corps pcm | curl -fsN -H 'Content-Type: application/json' --data-binary @- \"\$url/v1/audio/speech\" \
++                    | paplay --raw --format=s16le --rate=24000 --channels=1 --volume='$TTS_VOLUME' 2>/dev/null
++                exit
++            fi
++            wav=\$(mktemp -p \"\${XDG_RUNTIME_DIR:-/tmp}\" claude-tts-XXXXXX.wav)
++            trap 'rm -f \"\$wav\"' EXIT
++            trap 'exit 143' TERM INT
++            if corps wav | curl -fs -H 'Content-Type: application/json' --data-binary @- \
++                    -o \"\$wav\" \"\$url/v1/audio/speech\"; then
++                tour
++                paplay --volume='$TTS_VOLUME' \"\$wav\" 2>/dev/null
++                exit
++            fi
++        fi
++        tour
++        $piper_play
++    " "tts-speak:${TTS_SESSION:-manual}" "$processed" "$lock" "$chime" \
++        "$TTS_ENGINE" "$TTS_KYUTAI_URL" "$TTS_KYUTAI_VOICE" "$TTS_KYUTAI_MODE" \
++        </dev/null >/dev/null 2>&1 &
      disown 2>/dev/null || true
  }
  
-@@ -485,5 +502,27 @@
+@@ -485,5 +551,28 @@
  # Kill any in-flight paplay that matches our speak invocation.
  # Idempotent: pkill on nothing is a no-op.
  tts_kill_inflight() {
 +    _tts_kill_tagged "tts-speak:"
      pkill -f "paplay --raw --format=s16le --rate=22050" 2>/dev/null || true
- }
++    pkill -f "paplay --raw --format=s16le --rate=24000" 2>/dev/null || true
++}
 +
 +# rev0li : coupe seulement les lectures d'une session (en cours ou en
 +# attente dans la file), sans toucher à celles des autres terminaux.
@@ -143,4 +237,4 @@
 +        [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ] || continue
 +        kill -- "-$pid" 2>/dev/null || true
 +    done
-+}
+ }

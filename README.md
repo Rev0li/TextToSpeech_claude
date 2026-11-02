@@ -269,6 +269,8 @@ Le fichier [`patches/tts-0.1.6.patch`](./patches/tts-0.1.6.patch) change donc ce
 
 - `hooks/speak.sh` : ne lit que le **dernier message** du tour, c'est-à-dire le résumé final. Il le prend directement dans ce que Claude Code transmet au hook (`last_assistant_message`) ; avec une version de Claude Code trop ancienne pour fournir ce champ, il le cherche dans la transcription, en attendant jusqu'à 3 s que la réponse y soit écrite ;
 - `scripts/lib.sh` : avant la lecture, retire les liens, les adresses web, les chemins de fichiers (`~/…`, `/home/…`, `/tmp/…`), les lignes de tableau et les puces ;
+- **encart technique** : une ligne `---` (hors bloc de code) arrête la lecture. Tout ce qui suit s'affiche mais n'est pas lu (voir [section 12](#12-voix-kyutai-serveur-local-carte-nvidia)) ;
+- **moteur Kyutai** : avec `ENGINE=kyutai`, la lecture passe par le serveur Kyutai local, message complet ou au fil de l'eau (`KYUTAI_MODE`) ; s'il ne répond pas, retour à Piper (voir [section 12](#12-voix-kyutai-serveur-local-carte-nvidia)) ;
 - **file d'attente** : toutes les lectures, de tous les terminaux, passent l'une après l'autre (verrou `flock` sur `$XDG_RUNTIME_DIR/claude-tts.lock`). Le carillon sonne au début de chaque lecture, quand son tour arrive, ce qui permet de repérer le passage d'une réponse à l'autre ;
 - `hooks/interrupt.sh` : taper un message ne coupe que les réponses **de ce terminal** (en cours ou en attente) ; celles des autres terminaux restent dans la file. `/tts stop` coupe tout et vide la file.
 
@@ -303,13 +305,36 @@ Autres commandes : `status`, `restart`, `logs`.
 | Requête | Réponse |
 |---|---|
 | `POST /v1/audio/speech` `{"input": "…", "voice": "livre", "response_format": "wav"}` | WAV complet, 16 bits, 24 kHz, mono |
-| idem avec `"response_format": "pcm"` | PCM brut s16le 24 kHz, envoyé au fil de la génération |
+| idem avec `"response_format": "pcm"` | PCM brut s16le 24 kHz, envoyé morceau par morceau : un premier court (la voix démarre vite), puis quelques phrases à la fois |
 | `GET /v1/voices` | voix courtes connues |
 | `GET /health` | `{"status": "ok"}` |
 
+**Lire les réponses de Claude Code avec Kyutai.** Avec le [patch](#11-le-patch-message-final-file-dattente) appliqué, ajoute dans `~/.claude/.tts-config` :
+
+```
+ENGINE=kyutai
+KYUTAI_URL=http://127.0.0.1:8002
+KYUTAI_VOICE=livre
+KYUTAI_MODE=complet
+```
+
+Si le serveur est arrêté au moment de lire, le plugin retombe sur la voix Piper de `VOICE`.
+
+`KYUTAI_MODE` choisit comment lire :
+- `complet` (par défaut) : tout le message est généré d'abord, puis lu d'une traite, sans pause. La génération démarre tout de suite, même pendant la lecture d'une réponse précédente, et le carillon marque le début de la lecture. C'est aussi plus rapide au total (une seule génération au lieu d'une par morceau) ;
+- `flux` : la voix démarre plus tôt, mais sur une carte plus lente que le temps réel, des pauses tombent entre les morceaux.
+
+**Réponse parlée + encart technique.** Pour suivre le travail à l'oreille, la réponse commence par quelques phrases parlées. Après une ligne `---`, un encart technique (fichiers, commandes, détails) s'affiche sans être lu. Plus la partie parlée est courte, plus la voix démarre et finit vite. Pour que Claude écrive ainsi, mets la consigne dans ton `CLAUDE.md`, par exemple :
+
+```
+Commence chaque réponse par 2 à 5 phrases simples, à dire à voix haute.
+Ensuite, si besoin, une ligne --- puis un encart technique (fichiers, commandes, détails) : il ne sera pas lu.
+N'utilise pas --- ailleurs dans la partie parlée.
+```
+
 Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `LOCALAI_TTS_VOICE=livre`.
 
-**Voix.** `livre` (par défaut, extraite d'un livre audio), `developpeuse`, `fabien`, `developpeur`. On peut aussi donner n'importe quel chemin du dépôt [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices), par exemple `cml-tts/fr/…_enhanced.wav` (140 voix françaises), sans le suffixe `.1e68beda@240.safetensors`. Une voix inconnue retombe sur la voix par défaut.
+**Voix.** `livre` (par défaut, voix féminine extraite d'un livre audio), `conteur` (voix masculine, même source), `developpeuse`, `fabien`, `developpeur`. On peut aussi donner n'importe quel chemin du dépôt [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices), par exemple `cml-tts/fr/…_enhanced.wav` (140 voix françaises), sans le suffixe `.1e68beda@240.safetensors`. Une voix inconnue retombe sur la voix par défaut.
 
 **Réglages** (variables d'environnement) : `KYUTAI_PORT` (8002), `KYUTAI_VOICE` (`livre`), `KYUTAI_DEVICE` (`cuda`), `KYUTAI_NQ` (32 ; 16 est environ 30 % plus rapide mais moins fidèle).
 
@@ -321,7 +346,7 @@ Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `
 
 - Plugin `tts` : [cadrianmae/claude-marketplace](https://github.com/cadrianmae/claude-marketplace) (MIT)
 - Moteur : [Piper](https://github.com/rhasspy/piper) ; voix : [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). Chaque voix a sa propre licence, indiquée dans sa fiche Hugging Face.
-- Voix Kyutai : modèle [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) (CC-BY 4.0), bibliothèque [moshi](https://github.com/kyutai-labs/moshi) (MIT), voix de [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) : `livre` vient du jeu [CML-TTS](https://openslr.org/146/) (CC-BY 4.0), les trois autres sont des enregistrements de Kyutai (CC0). Ailleurs dans ce dépôt de voix, certains jeux (`expresso/`, `ears/`) sont **non commerciaux** ; la licence de chaque dossier est indiquée dans son README.
+- Voix Kyutai : modèle [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) (CC-BY 4.0), bibliothèque [moshi](https://github.com/kyutai-labs/moshi) (MIT), voix de [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) : `livre` et `conteur` viennent du jeu [CML-TTS](https://openslr.org/146/) (CC-BY 4.0), les trois autres sont des enregistrements de Kyutai (CC0). Ailleurs dans ce dépôt de voix, certains jeux (`expresso/`, `ears/`) sont **non commerciaux** ; la licence de chaque dossier est indiquée dans son README.
 
 Ce dépôt contient de la documentation, des scripts d'installation, une config et un patch de quelques lignes ; il ne redistribue ni le plugin ni les voix.
 

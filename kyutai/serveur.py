@@ -4,8 +4,11 @@
     GET  /v1/voices         voix courtes connues
     GET  /health
 
-- `wav` : fichier WAV complet (PCM 16 bits, 24 kHz, mono), rendu une fois la phrase générée.
-- `pcm` : PCM brut s16le 24 kHz mono, envoyé au fil de la génération (lecture immédiate).
+- `wav` : fichier WAV complet (PCM 16 bits, 24 kHz, mono), rendu une fois le texte généré.
+- `pcm` : PCM brut s16le 24 kHz mono, envoyé morceau par morceau (quelques phrases à la fois)
+  dès que chacun est prêt. Kyutai peut être plus lent que le temps réel : les pauses tombent
+  alors entre les phrases, pas au milieu des mots. Si le client coupe, les morceaux suivants
+  ne sont pas générés.
 
 Le modèle reste chargé sur la carte graphique ; une seule génération à la fois.
 N'écoute que sur 127.0.0.1.
@@ -15,7 +18,7 @@ from __future__ import annotations
 import io
 import json
 import os
-import queue
+import re
 import sys
 import threading
 import time
@@ -31,12 +34,18 @@ HOTE = "127.0.0.1"
 PORT = int(os.environ.get("KYUTAI_PORT", "8002"))
 APPAREIL = os.environ.get("KYUTAI_DEVICE", "cuda")
 NB_FLUX = int(os.environ.get("KYUTAI_NQ", "32"))  # moins = plus rapide, moins fidèle
-MAX_CARACTERES = 2000
+MAX_CARACTERES = 8000
 MAX_CORPS = 64 * 1024
+
+# Découpage du mode pcm : premier morceau court (la voix démarre vite), les suivants plus
+# longs (chaque génération coûte ~2 s fixes).
+PREMIER_MORCEAU = 30
+MORCEAU = 100
 
 # Noms courts → voix du dépôt Hugging Face kyutai/tts-voices.
 VOIX = {
     "livre": "cml-tts/fr/10087_11650_000028-0002_enhanced.wav",
+    "conteur": "cml-tts/fr/2114_1656_000053-0001_enhanced.wav",
     "developpeuse": "unmute-prod-website/developpeuse-3.wav",
     "fabien": "unmute-prod-website/fabieng-enhanced-v2.wav",
     "developpeur": "unmute-prod-website/developer-1.mp3",
@@ -46,6 +55,26 @@ VOIX_DEFAUT = os.environ.get("KYUTAI_VOICE", "livre")
 
 def journal(message: str) -> None:
     print(f"[kyutai {time.strftime('%H:%M:%S')}] {message}", file=sys.stderr, flush=True)
+
+
+def decouper(texte: str) -> list[str]:
+    """Regroupe les phrases en morceaux : un premier court (il peut s'arrêter à une virgule),
+    puis d'environ MORCEAU caractères."""
+    morceaux: list[str] = []
+    courant = ""
+    for phrase in (p for p in re.split(r"(?<=[.!?…:;])\s+|\n+", texte) if p.strip()):
+        if not morceaux and not courant and len(phrase) > PREMIER_MORCEAU:
+            debut, virgule, reste = phrase.partition(", ")
+            if virgule and len(debut) >= 15:
+                morceaux.append(debut + ",")
+                phrase = reste
+        courant = f"{courant} {phrase}".strip()
+        if len(courant) >= (PREMIER_MORCEAU if not morceaux else MORCEAU):
+            morceaux.append(courant)
+            courant = ""
+    if courant:
+        morceaux.append(courant)
+    return morceaux
 
 
 class Synthese:
@@ -79,32 +108,25 @@ class Synthese:
             )
         return self.conditions[chemin]
 
-    def generer(self, texte: str, voix: str | None, sortie: "queue.Queue[bytes | None]") -> None:
-        """Pousse des morceaux PCM s16le dans `sortie` au fil de la génération, puis None."""
-        try:
-            with self.verrou:
-                chemin = self.chemin_voix(voix)
-                cond = self.condition(chemin)
-                entrees = self.tts.prepare_script([texte], padding_between=1)
-                t0 = time.time()
-                total = 0
+    def generer(self, texte: str, voix: str | None) -> bytes:
+        """PCM s16le du texte entier."""
+        with self.verrou:
+            chemin = self.chemin_voix(voix)
+            cond = self.condition(chemin)
+            entrees = self.tts.prepare_script([texte], padding_between=1)
+            t0 = time.time()
+            morceaux: list[bytes] = []
 
-                def sur_trame(trame):
-                    nonlocal total
-                    if (trame != -1).all():
-                        pcm = self.tts.mimi.decode(trame[:, 1:, :]).cpu().numpy()[0, 0]
-                        morceau = (np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes()
-                        total += len(morceau)
-                        sortie.put(morceau)
+            def sur_trame(trame):
+                if (trame != -1).all():
+                    pcm = self.tts.mimi.decode(trame[:, 1:, :]).cpu().numpy()[0, 0]
+                    morceaux.append((np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes())
 
-                with self.tts.mimi.streaming(1), torch.no_grad():
-                    self.tts.generate([entrees], [cond], on_frame=sur_trame)
-                duree = total / 2 / self.frequence
-                journal(f"{duree:.1f} s d'audio en {time.time() - t0:.1f} s ({chemin})")
-        except Exception as erreur:  # le client reçoit un flux tronqué, le serveur continue
-            journal(f"échec de génération : {erreur!r}")
-        finally:
-            sortie.put(None)
+            with self.tts.mimi.streaming(1), torch.no_grad():
+                self.tts.generate([entrees], [cond], on_frame=sur_trame)
+            pcm = b"".join(morceaux)
+            journal(f"{len(pcm) / 2 / self.frequence:.1f} s d'audio en {time.time() - t0:.1f} s")
+            return pcm
 
 
 class Gestionnaire(BaseHTTPRequestHandler):
@@ -153,31 +175,15 @@ class Gestionnaire(BaseHTTPRequestHandler):
         format_ = demande.get("response_format") or "wav"
         if format_ not in ("wav", "pcm"):
             return self.erreur(400, "response_format : « wav » ou « pcm ».")
-
-        morceaux: "queue.Queue[bytes | None]" = queue.Queue()
-        threading.Thread(
-            target=self.synthese.generer,
-            args=(texte, demande.get("voice"), morceaux),
-            daemon=True,
-        ).start()
+        voix = demande.get("voice")
 
         if format_ == "pcm":
-            self.send_response(200)
-            self.send_header("Content-Type", "audio/pcm")
-            self.send_header("X-Sample-Rate", str(self.synthese.frequence))
-            self.send_header("Transfer-Encoding", "chunked")
-            self.end_headers()
-            try:
-                while (morceau := morceaux.get()) is not None:
-                    self.wfile.write(b"%x\r\n%s\r\n" % (len(morceau), morceau))
-                    self.wfile.flush()
-                self.wfile.write(b"0\r\n\r\n")
-            except (BrokenPipeError, ConnectionResetError):
-                journal("client parti avant la fin")
-            return
+            return self.flux_pcm(texte, voix)
 
-        pcm = b"".join(iter(morceaux.get, None))
-        if not pcm:
+        try:
+            pcm = self.synthese.generer(texte, voix)
+        except Exception as erreur:
+            journal(f"échec de génération : {erreur!r}")
             return self.erreur(500, "La génération a échoué.")
         tampon = io.BytesIO()
         with wave.open(tampon, "wb") as wav:
@@ -191,6 +197,25 @@ class Gestionnaire(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(corps)))
         self.end_headers()
         self.wfile.write(corps)
+
+    def flux_pcm(self, texte: str, voix: str | None) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/pcm")
+        self.send_header("X-Sample-Rate", str(self.synthese.frequence))
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        try:
+            for morceau in decouper(texte):
+                pcm = self.synthese.generer(morceau, voix)
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(pcm), pcm))
+                self.wfile.flush()
+            self.wfile.write(b"0\r\n\r\n")
+        except (BrokenPipeError, ConnectionResetError):
+            # Détecté à l'envoi d'un morceau : les suivants ne sont pas générés.
+            journal("lecture coupée par le client, génération arrêtée")
+        except Exception as erreur:  # le client reçoit un flux tronqué, le serveur continue
+            journal(f"échec de génération : {erreur!r}")
+            self.close_connection = True
 
 
 def main() -> None:
