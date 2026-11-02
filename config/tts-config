@@ -13,3 +13,4 @@ CHIME_SOUND=soft-chime
 ENGINE=piper
 KYUTAI_URL=http://127.0.0.1:8002
 KYUTAI_VOICE=livre
+KYUTAI_MODE=complet

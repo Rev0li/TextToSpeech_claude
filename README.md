@@ -270,7 +270,7 @@ Le fichier [`patches/tts-0.1.6.patch`](./patches/tts-0.1.6.patch) change donc ce
 - `hooks/speak.sh` : ne lit que le **dernier message** du tour, c'est-à-dire le résumé final. Il le prend directement dans ce que Claude Code transmet au hook (`last_assistant_message`) ; avec une version de Claude Code trop ancienne pour fournir ce champ, il le cherche dans la transcription, en attendant jusqu'à 3 s que la réponse y soit écrite ;
 - `scripts/lib.sh` : avant la lecture, retire les liens, les adresses web, les chemins de fichiers (`~/…`, `/home/…`, `/tmp/…`), les lignes de tableau et les puces ;
 - **encart technique** : une ligne `---` (hors bloc de code) arrête la lecture. Tout ce qui suit s'affiche mais n'est pas lu (voir [section 12](#12-voix-kyutai-serveur-local-carte-nvidia)) ;
-- **moteur Kyutai** : avec `ENGINE=kyutai`, la lecture passe par le serveur Kyutai local ; s'il ne répond pas, retour à Piper (voir [section 12](#12-voix-kyutai-serveur-local-carte-nvidia)) ;
+- **moteur Kyutai** : avec `ENGINE=kyutai`, la lecture passe par le serveur Kyutai local, message complet ou au fil de l'eau (`KYUTAI_MODE`) ; s'il ne répond pas, retour à Piper (voir [section 12](#12-voix-kyutai-serveur-local-carte-nvidia)) ;
 - **file d'attente** : toutes les lectures, de tous les terminaux, passent l'une après l'autre (verrou `flock` sur `$XDG_RUNTIME_DIR/claude-tts.lock`). Le carillon sonne au début de chaque lecture, quand son tour arrive, ce qui permet de repérer le passage d'une réponse à l'autre ;
 - `hooks/interrupt.sh` : taper un message ne coupe que les réponses **de ce terminal** (en cours ou en attente) ; celles des autres terminaux restent dans la file. `/tts stop` coupe tout et vide la file.
 
@@ -315,9 +315,14 @@ Autres commandes : `status`, `restart`, `logs`.
 ENGINE=kyutai
 KYUTAI_URL=http://127.0.0.1:8002
 KYUTAI_VOICE=livre
+KYUTAI_MODE=complet
 ```
 
-Si le serveur est arrêté au moment de lire, le plugin retombe sur la voix Piper de `VOICE`. Kyutai pouvant être plus lent que le temps réel, les pauses tombent entre les morceaux, pas au milieu des mots.
+Si le serveur est arrêté au moment de lire, le plugin retombe sur la voix Piper de `VOICE`.
+
+`KYUTAI_MODE` choisit comment lire :
+- `complet` (par défaut) : tout le message est généré d'abord, puis lu d'une traite, sans pause. La génération démarre tout de suite, même pendant la lecture d'une réponse précédente, et le carillon marque le début de la lecture. C'est aussi plus rapide au total (une seule génération au lieu d'une par morceau) ;
+- `flux` : la voix démarre plus tôt, mais sur une carte plus lente que le temps réel, des pauses tombent entre les morceaux.
 
 **Réponse parlée + encart technique.** Pour suivre le travail à l'oreille, la réponse commence par quelques phrases parlées. Après une ligne `---`, un encart technique (fichiers, commandes, détails) s'affiche sans être lu. Plus la partie parlée est courte, plus la voix démarre et finit vite. Pour que Claude écrive ainsi, mets la consigne dans ton `CLAUDE.md`, par exemple :
 
