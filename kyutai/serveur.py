@@ -48,35 +48,35 @@ MAX_CORPS = 64 * 1024
 PREMIER_MORCEAU = 30
 MORCEAU = 100
 
-# Les cinq voix proposées (toutes du jeu CML-TTS, livres audio, licence CC-BY 4.0) :
+# Les onze voix du menu (toutes du jeu CML-TTS, livres audio, licence CC-BY 4.0), femmes puis hommes :
 # nom court → (chemin dans le dépôt Hugging Face kyutai/tts-voices, genre, description).
 # N'importe quel autre chemin du dépôt reste utilisable dans « voice ».
 VOIX_DETAILS = {
     "livre": ("cml-tts/fr/10087_11650_000028-0002_enhanced.wav", "femme", "douce, posée"),
     "lectrice": ("cml-tts/fr/5830_4703_000037-0001_enhanced.wav", "femme", "plus claire"),
+    "fr-2154": ("cml-tts/fr/2154_2576_000020-0003_enhanced.wav", "femme", "184 Hz"),
+    "fr-5476": ("cml-tts/fr/5476_3103_000072-0001_enhanced.wav", "femme", "186 Hz"),
     "conteur": ("cml-tts/fr/2114_1656_000053-0001_enhanced.wav", "homme", "chaleureuse"),
     "narrateur": ("cml-tts/fr/1406_1028_000009-0003_enhanced.wav", "homme", "grave"),
     "recitant": ("cml-tts/fr/4937_3731_000004-0001_enhanced.wav", "homme", "plus claire"),
+    "fr-928": ("cml-tts/fr/928_486_000075-0001_enhanced.wav", "homme", "133 Hz"),
+    "fr-1770": ("cml-tts/fr/1770_1028_000036-0002_enhanced.wav", "homme", "125 Hz"),
+    "fr-5790": ("cml-tts/fr/5790_4893_000052-0001_enhanced.wav", "homme", "116 Hz"),
+    "fr-4193": ("cml-tts/fr/4193_3103_000004-0001_enhanced.wav", "homme", "85 Hz"),
 }
-# Les 30 autres voix françaises nettoyées du même jeu, à tester avant d'en ajouter au menu :
+# Les 24 autres voix françaises nettoyées du même jeu, à tester avant d'en ajouter au menu :
 # (nom court, chemin, genre, hauteur médiane en Hz mesurée sur l'extrait de référence).
 VOIX_AUTRES = [
-    ("fr-4193", "cml-tts/fr/4193_3103_000004-0001_enhanced.wav", "homme", 85),
     ("fr-7601", "cml-tts/fr/7601_7727_000062-0001_enhanced.wav", "homme", 95),
     ("fr-4482", "cml-tts/fr/4482_3103_000063-0001_enhanced.wav", "homme", 114),
     ("fr-9834", "cml-tts/fr/9834_9697_000150-0003_enhanced.wav", "homme", 114),
-    ("fr-5790", "cml-tts/fr/5790_4893_000052-0001_enhanced.wav", "homme", 116),
     ("fr-2223", "cml-tts/fr/2223_1745_000009-0002_enhanced.wav", "homme", 122),
     ("fr-2216", "cml-tts/fr/2216_1745_000007-0001_enhanced.wav", "homme", 124),
     ("fr-296", "cml-tts/fr/296_1028_000022-0001_enhanced.wav", "homme", 124),
-    ("fr-1770", "cml-tts/fr/1770_1028_000036-0002_enhanced.wav", "homme", 125),
     ("fr-7142", "cml-tts/fr/7142_2432_000124-0003_enhanced.wav", "homme", 133),
-    ("fr-928", "cml-tts/fr/928_486_000075-0001_enhanced.wav", "homme", 133),
     ("fr-4724", "cml-tts/fr/4724_3731_000031-0001_enhanced.wav", "homme", 134),
     ("fr-8128", "cml-tts/fr/8128_7016_000047-0002_enhanced.wav", "homme", 135),
     ("fr-12205", "cml-tts/fr/12205_11650_000004-0002_enhanced.wav", "femme", 180),
-    ("fr-2154", "cml-tts/fr/2154_2576_000020-0003_enhanced.wav", "femme", 184),
-    ("fr-5476", "cml-tts/fr/5476_3103_000072-0001_enhanced.wav", "femme", 186),
     ("fr-7591", "cml-tts/fr/7591_6742_000149-0002_enhanced.wav", "femme", 193),
     ("fr-579", "cml-tts/fr/579_2548_000015-0001_enhanced.wav", "femme", 198),
     ("fr-7400", "cml-tts/fr/7400_2928_000100-0001_enhanced.wav", "femme", 198),

@@ -27,8 +27,8 @@ type infoVoix struct {
 }
 
 type listeVoix struct {
-	voix []infoVoix
-	err  error
+	menu, autres []infoVoix
+	err          error
 }
 
 type essaiPret struct {
@@ -62,7 +62,7 @@ func chargerVoix() tea.Msg {
 		corps.Autres[i].Autre = true
 		corps.Autres[i].Description = fmt.Sprintf("%d Hz", corps.Autres[i].Hauteur)
 	}
-	return listeVoix{voix: append(corps.Details, corps.Autres...)}
+	return listeVoix{menu: corps.Details, autres: corps.Autres}
 }
 
 func phraseEssai(nom string) string {
@@ -86,12 +86,22 @@ func genererEssai(nom string, tp *tampon) tea.Cmd {
 
 type ecranVoix struct {
 	ouvert     bool
-	voix       []infoVoix
+	menu       []infoVoix
+	autres     []infoVoix
+	plus       bool // onglet « Plus de voix »
 	sel        int
 	err        string
 	essais     map[string]*tampon
 	enCours    string // voix dont l'essai est en génération
 	pauseAvant bool   // la file était-elle déjà en pause en ouvrant l'écran ?
+}
+
+// liste : voix de l'onglet affiché.
+func (ev *ecranVoix) liste() []infoVoix {
+	if ev.plus {
+		return ev.autres
+	}
+	return ev.menu
 }
 
 func (m *modele) ouvrirVoix() tea.Cmd {
@@ -120,10 +130,10 @@ func (m *modele) fermerVoix() tea.Cmd {
 }
 
 func (m *modele) ecouterVoix() tea.Cmd {
-	if m.ev.sel >= len(m.ev.voix) {
+	if m.ev.sel >= len(m.ev.liste()) {
 		return nil
 	}
-	nom := m.ev.voix[m.ev.sel].Nom
+	nom := m.ev.liste()[m.ev.sel].Nom
 	if m.essai != nil {
 		m.essai.arreter()
 		m.essai = nil
@@ -153,10 +163,10 @@ func (m *modele) jouerEssai(tp *tampon) tea.Cmd {
 }
 
 func (m *modele) choisirVoix() {
-	if m.ev.sel >= len(m.ev.voix) {
+	if m.ev.sel >= len(m.ev.liste()) {
 		return
 	}
-	if err := ecrireConfig("KYUTAI_VOICE", m.ev.voix[m.ev.sel].Nom); err != nil {
+	if err := ecrireConfig("KYUTAI_VOICE", m.ev.liste()[m.ev.sel].Nom); err != nil {
 		m.ev.err = "écriture de la config : " + err.Error()
 	}
 }
@@ -168,11 +178,17 @@ func (m *modele) majVoix(msg tea.Msg) (tea.Cmd, bool) {
 			m.ev.err = msg.err.Error()
 			return nil, true
 		}
-		m.ev.voix = msg.voix
+		m.ev.menu, m.ev.autres = msg.menu, msg.autres
 		actuelle := lireConfig().KyutaiVoix
-		for i, v := range m.ev.voix {
+		m.ev.plus, m.ev.sel = false, 0
+		for i, v := range m.ev.menu {
 			if v.Nom == actuelle {
 				m.ev.sel = i
+			}
+		}
+		for i, v := range m.ev.autres {
+			if v.Nom == actuelle {
+				m.ev.plus, m.ev.sel = true, i
 			}
 		}
 		return nil, true
@@ -186,7 +202,7 @@ func (m *modele) majVoix(msg tea.Msg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		// On ne joue que si l'écran est ouvert et que cette voix est toujours choisie.
-		if m.ev.ouvert && m.ev.sel < len(m.ev.voix) && m.ev.voix[m.ev.sel].Nom == msg.nom && m.essai == nil {
+		if m.ev.ouvert && m.ev.sel < len(m.ev.liste()) && m.ev.liste()[m.ev.sel].Nom == msg.nom && m.essai == nil {
 			return m.jouerEssai(m.ev.essais[msg.nom]), true
 		}
 		return nil, true
@@ -210,9 +226,12 @@ func (m *modele) toucheVoix(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ev.sel--
 		}
 	case "down", "j":
-		if m.ev.sel < len(m.ev.voix)-1 {
+		if m.ev.sel < len(m.ev.liste())-1 {
 			m.ev.sel++
 		}
+	case "tab", "shift+tab", "left", "right":
+		m.ev.plus = !m.ev.plus
+		m.ev.sel = 0
 	case "enter":
 		return m, m.ecouterVoix()
 	case " ":
@@ -226,29 +245,30 @@ func (m *modele) toucheVoix(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *modele) vueVoix(l int) string {
 	var entete, lignes []string
 	selLigne := 0
-	entete = append(entete, styleTitre.Render("🎙 claude-voix › Voix")+"   "+styleDiscret.Render("la file des réponses est en pause"), "")
+	onglets := styleTitre.Render("[ Menu ]") + "  " + styleDiscret.Render(fmt.Sprintf("Plus de voix (%d)", len(m.ev.autres)))
+	if m.ev.plus {
+		onglets = styleDiscret.Render("Menu") + "  " + styleTitre.Render(fmt.Sprintf("[ Plus de voix (%d) ]", len(m.ev.autres)))
+	}
+	entete = append(entete,
+		styleTitre.Render("🎙 claude-voix › Voix")+"   "+styleDiscret.Render("la file des réponses est en pause"),
+		"", "  "+onglets+styleAide.Render("   (tab pour changer)"), "")
+	if m.ev.plus {
+		entete = append(entete, styleDiscret.Render("  À tester : dis à Claude lesquelles ajouter au menu."), "")
+	}
 	if m.ev.err != "" {
 		entete = append(entete, styleErreur.Render("  "+m.ev.err), "")
 	}
-	if len(m.ev.voix) == 0 && m.ev.err == "" {
+	if len(m.ev.menu) == 0 && m.ev.err == "" {
 		entete = append(entete, styleDiscret.Render("  Chargement des voix…"))
 	}
 	actuelle := lireConfig().KyutaiVoix
-	section, genre := "", ""
-	for i, v := range m.ev.voix {
-		s := "Menu"
-		if v.Autre {
-			s = "Autres voix, à tester (dis à Claude lesquelles ajouter au menu)"
-		}
-		if s != section {
-			if section != "" {
-				lignes = append(lignes, "")
-			}
-			section, genre = s, ""
-			lignes = append(lignes, styleTitre.Render("  "+section))
-		}
+	genre := ""
+	for i, v := range m.ev.liste() {
 		if v.Genre != genre {
 			genre = v.Genre
+			if len(lignes) > 0 {
+				lignes = append(lignes, "")
+			}
 			lignes = append(lignes, "  "+styleNom.Render(strings.ToUpper(genre[:1])+genre[1:]+"s"))
 		}
 		curseur := "  "
@@ -273,13 +293,12 @@ func (m *modele) vueVoix(l int) string {
 		"",
 		styleDiscret.Render("  Phrase d'essai : « " + phraseEssai("[nom]") + " »"),
 		"",
-		styleAide.Width(l).Render("entrée écouter · espace choisir pour lire les réponses · ↑↓ parcourir · échap retour · q quitter"),
+		styleAide.Width(l).Render("entrée écouter · espace choisir pour lire les réponses · ↑↓ parcourir · tab menu / plus de voix · échap retour · q quitter"),
 	}
 	// Défilement : la voix choisie reste visible.
 	place := max(m.hauteur-len(entete)-len(pied)-1, 5)
-	debut := 0
 	if len(lignes) > place {
-		debut = min(max(selLigne-place/2, 0), len(lignes)-place)
+		debut := min(max(selLigne-place/2, 0), len(lignes)-place)
 		lignes = lignes[debut : debut+place]
 	}
 	tout := append(append(entete, lignes...), pied...)

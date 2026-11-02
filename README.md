@@ -337,19 +337,25 @@ Une limite chiffrée (100 mots) marche mieux qu'un simple « court » : sans ell
 
 Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `LOCALAI_TTS_VOICE=livre`.
 
-**Voix.** Cinq voix françaises, toutes tirées de livres audio (jeu CML-TTS) :
+**Voix.** Onze voix françaises au menu, toutes tirées de livres audio (jeu CML-TTS) :
 
 | Nom | Genre | Timbre |
 |---|---|---|
 | `livre` (par défaut) | femme | douce, posée |
 | `lectrice` | femme | plus claire |
+| `fr-2154` | femme | 184 Hz |
+| `fr-5476` | femme | 186 Hz |
 | `conteur` | homme | chaleureuse |
 | `narrateur` | homme | grave |
 | `recitant` | homme | plus claire |
+| `fr-928` | homme | 133 Hz |
+| `fr-1770` | homme | 125 Hz |
+| `fr-5790` | homme | 116 Hz |
+| `fr-4193` | homme | 85 Hz |
 
 Le plus simple pour les écouter et choisir : la touche `v` de [`claude-voix`](#13-claude-voix-le-gestionnaire-de-conversation).
 
-Sous ce menu, l'écran Voix liste aussi les **30 autres voix françaises** nettoyées du même jeu (`fr-4193`, `fr-6318`…), rangées par genre et par hauteur, pour les essayer. Elles sont utilisables telles quelles (`KYUTAI_VOICE=fr-6318`). Pour en ajouter une au menu, il suffit de l'inscrire dans `VOIX_DETAILS` de [`kyutai/serveur.py`](./kyutai/serveur.py) avec un nom et un timbre. On peut aussi donner n'importe quel chemin du dépôt [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices), par exemple `cml-tts/fr/…_enhanced.wav` (140 voix françaises), sans le suffixe `.1e68beda@240.safetensors`. Une voix inconnue retombe sur la voix par défaut.
+Un deuxième onglet (touche `tab`), **Plus de voix**, liste les 24 autres voix françaises nettoyées du même jeu, rangées par genre et par hauteur, pour les essayer. Elles sont utilisables telles quelles (`KYUTAI_VOICE=fr-6318`). Pour en ajouter une au menu, il suffit de l'inscrire dans `VOIX_DETAILS` de [`kyutai/serveur.py`](./kyutai/serveur.py) avec un nom et un timbre. On peut aussi donner n'importe quel chemin du dépôt [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices), par exemple `cml-tts/fr/…_enhanced.wav` (140 voix françaises), sans le suffixe `.1e68beda@240.safetensors`. Une voix inconnue retombe sur la voix par défaut.
 
 **Réglages** (variables d'environnement) : `KYUTAI_PORT` (8002), `KYUTAI_VOICE` (`livre`), `KYUTAI_DEVICE` (`cuda`), `KYUTAI_NQ` (32 ; 16 est environ 30 % plus rapide mais moins fidèle).
 
@@ -386,7 +392,7 @@ Les cartes se rangent en une à trois colonnes selon la largeur du terminal. La 
 | `échap` | revenir à la carte en cours de lecture |
 | `entrée` | relire la réponse de la carte choisie |
 | `r` | renommer la fenêtre de la carte choisie |
-| `v` | écran **Voix** : écouter les cinq voix du menu et les 30 autres (`entrée`), choisir celle qui lit les réponses (`espace`) ; la file est en pause pendant les essais |
+| `v` | écran **Voix** : écouter les onze voix du menu ou, avec `tab`, les 24 autres (`entrée`) ; choisir celle qui lit les réponses (`espace`) ; la file est en pause pendant les essais |
 | `q` | quitter |
 
 **Le nom des fenêtres.** Chaque réponse porte le nom de la fenêtre Claude Code qui l'a écrite : au départ, le nom de son dossier (`rev0auth`, `SongSurf`…). Touche `r` pour le changer (par exemple `auth`). Le nom vaut pour cette session et pour les prochaines sessions lancées dans le même dossier. Il est gardé dans `~/.config/claude-voix/noms.json`.
@@ -412,7 +418,7 @@ Les cartes se rangent en une à trois colonnes selon la largeur du terminal. La 
 - Plugin `tts` : [cadrianmae/claude-marketplace](https://github.com/cadrianmae/claude-marketplace) (MIT)
 - Interface `claude-voix` : [Bubble Tea, Lip Gloss, Bubbles](https://github.com/charmbracelet) de Charm (MIT)
 - Moteur : [Piper](https://github.com/rhasspy/piper) ; voix : [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). Chaque voix a sa propre licence, indiquée dans sa fiche Hugging Face.
-- Voix Kyutai : modèle [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) (CC-BY 4.0), bibliothèque [moshi](https://github.com/kyutai-labs/moshi) (MIT), voix de [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) : les cinq voix proposées viennent du jeu [CML-TTS](https://openslr.org/146/) (CC-BY 4.0). Ailleurs dans ce dépôt de voix, certains jeux (`expresso/`, `ears/`) sont **non commerciaux** ; la licence de chaque dossier est indiquée dans son README.
+- Voix Kyutai : modèle [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) (CC-BY 4.0), bibliothèque [moshi](https://github.com/kyutai-labs/moshi) (MIT), voix de [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) : toutes les voix proposées viennent du jeu [CML-TTS](https://openslr.org/146/) (CC-BY 4.0). Ailleurs dans ce dépôt de voix, certains jeux (`expresso/`, `ears/`) sont **non commerciaux** ; la licence de chaque dossier est indiquée dans son README.
 
 Ce dépôt contient de la documentation, des scripts d'installation, une config et un patch de quelques lignes ; il ne redistribue ni le plugin ni les voix.
 
