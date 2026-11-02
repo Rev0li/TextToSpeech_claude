@@ -269,6 +269,8 @@ Le fichier [`patches/tts-0.1.6.patch`](./patches/tts-0.1.6.patch) change donc ce
 
 - `hooks/speak.sh` : ne lit que le **dernier message** du tour, c'est-à-dire le résumé final. Il le prend directement dans ce que Claude Code transmet au hook (`last_assistant_message`) ; avec une version de Claude Code trop ancienne pour fournir ce champ, il le cherche dans la transcription, en attendant jusqu'à 3 s que la réponse y soit écrite ;
 - `scripts/lib.sh` : avant la lecture, retire les liens, les adresses web, les chemins de fichiers (`~/…`, `/home/…`, `/tmp/…`), les lignes de tableau et les puces ;
+- **encart technique** : une ligne `---` (hors bloc de code) arrête la lecture. Tout ce qui suit s'affiche mais n'est pas lu (voir [section 12](#12-voix-kyutai-serveur-local-carte-nvidia)) ;
+- **moteur Kyutai** : avec `ENGINE=kyutai`, la lecture passe par le serveur Kyutai local ; s'il ne répond pas, retour à Piper (voir [section 12](#12-voix-kyutai-serveur-local-carte-nvidia)) ;
 - **file d'attente** : toutes les lectures, de tous les terminaux, passent l'une après l'autre (verrou `flock` sur `$XDG_RUNTIME_DIR/claude-tts.lock`). Le carillon sonne au début de chaque lecture, quand son tour arrive, ce qui permet de repérer le passage d'une réponse à l'autre ;
 - `hooks/interrupt.sh` : taper un message ne coupe que les réponses **de ce terminal** (en cours ou en attente) ; celles des autres terminaux restent dans la file. `/tts stop` coupe tout et vide la file.
 
@@ -303,9 +305,27 @@ Autres commandes : `status`, `restart`, `logs`.
 | Requête | Réponse |
 |---|---|
 | `POST /v1/audio/speech` `{"input": "…", "voice": "livre", "response_format": "wav"}` | WAV complet, 16 bits, 24 kHz, mono |
-| idem avec `"response_format": "pcm"` | PCM brut s16le 24 kHz, envoyé au fil de la génération |
+| idem avec `"response_format": "pcm"` | PCM brut s16le 24 kHz, envoyé morceau par morceau : un premier court (la voix démarre vite), puis quelques phrases à la fois |
 | `GET /v1/voices` | voix courtes connues |
 | `GET /health` | `{"status": "ok"}` |
+
+**Lire les réponses de Claude Code avec Kyutai.** Avec le [patch](#11-le-patch-message-final-file-dattente) appliqué, ajoute dans `~/.claude/.tts-config` :
+
+```
+ENGINE=kyutai
+KYUTAI_URL=http://127.0.0.1:8002
+KYUTAI_VOICE=livre
+```
+
+Si le serveur est arrêté au moment de lire, le plugin retombe sur la voix Piper de `VOICE`. Kyutai pouvant être plus lent que le temps réel, les pauses tombent entre les morceaux, pas au milieu des mots.
+
+**Réponse parlée + encart technique.** Pour suivre le travail à l'oreille, la réponse commence par quelques phrases parlées. Après une ligne `---`, un encart technique (fichiers, commandes, détails) s'affiche sans être lu. Plus la partie parlée est courte, plus la voix démarre et finit vite. Pour que Claude écrive ainsi, mets la consigne dans ton `CLAUDE.md`, par exemple :
+
+```
+Commence chaque réponse par 2 à 5 phrases simples, à dire à voix haute.
+Ensuite, si besoin, une ligne --- puis un encart technique (fichiers, commandes, détails) : il ne sera pas lu.
+N'utilise pas --- ailleurs dans la partie parlée.
+```
 
 Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `LOCALAI_TTS_VOICE=livre`.
 
