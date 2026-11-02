@@ -332,10 +332,14 @@ Si le serveur est arrêté au moment de lire, le plugin retombe sur la voix Pipe
 **Réponse parlée + encart technique.** Pour suivre le travail à l'oreille, la réponse commence par quelques phrases parlées. Après une ligne `---`, un encart technique (fichiers, commandes, détails) s'affiche sans être lu. Plus la partie parlée est courte, plus la voix démarre et finit vite. Pour que Claude écrive ainsi, mets la consigne dans ton `CLAUDE.md`, par exemple :
 
 ```
-Commence chaque réponse par 2 à 5 phrases simples, à dire à voix haute.
-Ensuite, si besoin, une ligne --- puis un encart technique (fichiers, commandes, détails) : il ne sera pas lu.
-N'utilise pas --- ailleurs dans la partie parlée.
+Seule la partie avant la première ligne --- est lue à voix haute.
+1. Partie parlée : 1 à 3 phrases courtes, 50 mots au plus : ce qui est fait, l'état, une question à la fin s'il y en a une.
+2. Puis une ligne --- seule, dès qu'il y a des détails.
+3. Dessous, l'encart technique non lu : causes, mesures, listes, fichiers, commandes, liens.
+4. Jamais de --- dans la partie parlée.
 ```
+
+Une limite chiffrée (50 mots) marche mieux qu'un simple « court » : sans elle, Claude a tendance à tout mettre dans la partie lue.
 
 Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `LOCALAI_TTS_VOICE=livre`.
 

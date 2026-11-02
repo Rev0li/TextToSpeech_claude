@@ -7,8 +7,10 @@
 - `wav` : fichier WAV complet (PCM 16 bits, 24 kHz, mono), rendu une fois le texte généré.
 - `pcm` : PCM brut s16le 24 kHz mono, envoyé morceau par morceau (quelques phrases à la fois)
   dès que chacun est prêt. Kyutai peut être plus lent que le temps réel : les pauses tombent
-  alors entre les phrases, pas au milieu des mots. Si le client coupe, les morceaux suivants
-  ne sont pas générés.
+  alors entre les phrases, pas au milieu des mots.
+
+Si le client ferme la connexion, la génération s'arrête dans la demi-seconde : la place est
+libre pour la demande suivante.
 
 Le modèle reste chargé sur la carte graphique ; une seule génération à la fois.
 N'écoute que sur 127.0.0.1.
@@ -19,6 +21,8 @@ import io
 import json
 import os
 import re
+import select
+import socket
 import sys
 import threading
 import time
@@ -77,6 +81,24 @@ def decouper(texte: str) -> list[str]:
     return morceaux
 
 
+class ClientParti(Exception):
+    """Le client a fermé la connexion : inutile de continuer la génération."""
+
+
+def client_parti(conn: socket.socket) -> bool:
+    """Vrai si le client a fermé la connexion. Après la requête, il n'a plus rien à envoyer :
+    une socket lisible signifie une fermeture (lecture vide) ou une erreur."""
+    try:
+        lisible, _, _ = select.select([conn], [], [], 0)
+        return bool(lisible) and conn.recv(1, socket.MSG_PEEK) == b""
+    except OSError:
+        return True
+
+
+# Vérification toutes les 6 trames (~0,5 s d'audio) : coût négligeable.
+TRAMES_ENTRE_VERIFS = 6
+
+
 class Synthese:
     def __init__(self) -> None:
         t0 = time.time()
@@ -108,16 +130,23 @@ class Synthese:
             )
         return self.conditions[chemin]
 
-    def generer(self, texte: str, voix: str | None) -> bytes:
-        """PCM s16le du texte entier."""
+    def generer(self, texte: str, voix: str | None, parti=None) -> bytes:
+        """PCM s16le du texte entier. `parti()` vrai → ClientParti (génération abandonnée)."""
         with self.verrou:
+            if parti is not None and parti():
+                raise ClientParti
             chemin = self.chemin_voix(voix)
             cond = self.condition(chemin)
             entrees = self.tts.prepare_script([texte], padding_between=1)
             t0 = time.time()
             morceaux: list[bytes] = []
+            trames = 0
 
             def sur_trame(trame):
+                nonlocal trames
+                trames += 1
+                if parti is not None and trames % TRAMES_ENTRE_VERIFS == 0 and parti():
+                    raise ClientParti
                 if (trame != -1).all():
                     pcm = self.tts.mimi.decode(trame[:, 1:, :]).cpu().numpy()[0, 0]
                     morceaux.append((np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes())
@@ -181,7 +210,11 @@ class Gestionnaire(BaseHTTPRequestHandler):
             return self.flux_pcm(texte, voix)
 
         try:
-            pcm = self.synthese.generer(texte, voix)
+            pcm = self.synthese.generer(texte, voix, lambda: client_parti(self.connection))
+        except ClientParti:
+            journal("génération abandonnée : le client est parti")
+            self.close_connection = True
+            return
         except Exception as erreur:
             journal(f"échec de génération : {erreur!r}")
             return self.erreur(500, "La génération a échoué.")
@@ -206,13 +239,13 @@ class Gestionnaire(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             for morceau in decouper(texte):
-                pcm = self.synthese.generer(morceau, voix)
+                pcm = self.synthese.generer(morceau, voix, lambda: client_parti(self.connection))
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(pcm), pcm))
                 self.wfile.flush()
             self.wfile.write(b"0\r\n\r\n")
-        except (BrokenPipeError, ConnectionResetError):
-            # Détecté à l'envoi d'un morceau : les suivants ne sont pas générés.
+        except (BrokenPipeError, ConnectionResetError, ClientParti):
             journal("lecture coupée par le client, génération arrêtée")
+            self.close_connection = True
         except Exception as erreur:  # le client reçoit un flux tronqué, le serveur continue
             journal(f"échec de génération : {erreur!r}")
             self.close_connection = True
