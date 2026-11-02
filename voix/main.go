@@ -68,18 +68,12 @@ func commandeCouper(args []string) int {
 }
 
 func gestionnaire() error {
-	dossierAudio, err := os.MkdirTemp(dossierExecution(), "claude-voix-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dossierAudio)
-
 	// Couleurs fixes : inutile d'interroger le terminal sur sa couleur de fond
 	// (certains terminaux ne répondent pas et le démarrage attend plusieurs secondes).
 	lipgloss.SetHasDarkBackground(true)
 
 	travaux := make(chan travail, 100)
-	m := nouveauModele(chargerNoms(), dossierAudio, travaux)
+	m := nouveauModele(chargerNoms(), travaux)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	chemin := cheminSocket()

@@ -23,7 +23,7 @@ cd TextToSpeech_claude
 
 Puis redémarre Claude Code une fois et, dans un autre terminal, lance **`claude-voix`** : les réponses de Claude Code y arrivent et sont lues à voix haute (voir [section 13](#13-claude-voix-le-gestionnaire-de-conversation)).
 
-Le script installe Piper, le plugin `tts`, la voix `fr_FR-siwis`, copie [`config/tts-config`](./config/tts-config) dans `~/.claude/.tts-config` (l'ancienne config est gardée en `.bak`), applique le [patch](#11-le-patch-message-final-file-dattente) et compile le gestionnaire `claude-voix` (il faut Go : `sudo dnf install -y golang`). Avec `--kyutai`, il installe aussi le serveur Kyutai. Il ne refait pas ce qui est déjà en place, tu peux donc le relancer sans risque. Après une mise à jour du dépôt : `git pull` puis `./install.sh --voix` (recompile `claude-voix`) et `./install.sh --patch`.
+Le script installe Piper, le plugin `tts`, la voix `fr_FR-siwis`, copie [`config/tts-config`](./config/tts-config) dans `~/.claude/.tts-config` (l'ancienne config est gardée en `.bak`), applique le [patch](#11-le-patch-message-final-file-dattente), ajoute la [consigne de format](./config/CLAUDE-voix.md) des réponses à `~/.claude/CLAUDE.md` et compile le gestionnaire `claude-voix` (il faut Go : `sudo dnf install -y golang`). Avec `--kyutai`, il installe aussi le serveur Kyutai. Il ne refait pas ce qui est déjà en place, tu peux donc le relancer sans risque. Après une mise à jour du dépôt : `git pull` puis `./install.sh --voix` (recompile `claude-voix`) et `./install.sh --patch`.
 
 Le reste de ce README détaille chaque étape, si tu préfères tout faire à la main.
 
@@ -329,17 +329,11 @@ Si le serveur est arrêté au moment de lire, le plugin retombe sur la voix Pipe
 - `complet` (par défaut) : tout le message est généré d'abord, puis lu d'une traite, sans pause. La génération démarre tout de suite, même pendant la lecture d'une réponse précédente, et le carillon marque le début de la lecture. C'est aussi plus rapide au total (une seule génération au lieu d'une par morceau) ;
 - `flux` : la voix démarre plus tôt, mais sur une carte plus lente que le temps réel, des pauses tombent entre les morceaux.
 
-**Réponse parlée + encart technique.** Pour suivre le travail à l'oreille, la réponse commence par quelques phrases parlées. Après une ligne `---`, un encart technique (fichiers, commandes, détails) s'affiche sans être lu. Plus la partie parlée est courte, plus la voix démarre et finit vite. Pour que Claude écrive ainsi, mets la consigne dans ton `CLAUDE.md`, par exemple :
+**Réponse parlée + encart technique.** Pour suivre le travail à l'oreille, la réponse de Claude commence par une partie parlée courte (100 mots au plus). Après une ligne `---`, un encart technique (causes, mesures, fichiers, commandes, liens) s'affiche sans être lu. Plus la partie parlée est courte, plus la voix démarre et finit vite.
 
-```
-Seule la partie avant la première ligne --- est lue à voix haute.
-1. Partie parlée : 1 à 3 phrases courtes, 50 mots au plus : ce qui est fait, l'état, une question à la fin s'il y en a une.
-2. Puis une ligne --- seule, dès qu'il y a des détails.
-3. Dessous, l'encart technique non lu : causes, mesures, listes, fichiers, commandes, liens.
-4. Jamais de --- dans la partie parlée.
-```
+`install.sh` met cette consigne en place tout seul : il ajoute [`config/CLAUDE-voix.md`](./config/CLAUDE-voix.md) à ton `~/.claude/CLAUDE.md`, entre deux balises `claude-voix`, sans toucher au reste du fichier. Pour la mettre à jour après un `git pull` : `./install.sh --consigne`. Les sessions Claude Code déjà ouvertes ne relisent pas `CLAUDE.md` : relance-les.
 
-Une limite chiffrée (50 mots) marche mieux qu'un simple « court » : sans elle, Claude a tendance à tout mettre dans la partie lue.
+Une limite chiffrée (100 mots) marche mieux qu'un simple « court » : sans elle, Claude a tendance à tout mettre dans la partie lue.
 
 Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `LOCALAI_TTS_VOICE=livre`.
 
@@ -388,6 +382,8 @@ Les cartes se rangent en une à trois colonnes selon la largeur du terminal. La 
 
 **Comportement.**
 - Les cartes sont lues dans l'ordre d'arrivée de leur réponse. La suivante est générée pendant que la précédente est lue.
+- **La lecture démarre pendant la génération.** Kyutai envoie l'audio au fil de l'eau. `claude-voix` mesure sa vitesse réelle et lance la lecture au moment où elle ne pourra plus rattraper la génération : la voix démarre bien plus tôt, sans aucune pause. Mesuré sur une GTX 1060, pour 19 s de parole : lecture lancée à 14,5 s au lieu de 28 s, tout lu à 33,7 s.
+- Supprimer une carte, ou recevoir une nouvelle réponse de la même fenêtre, arrête aussi sa génération : le serveur passe aussitôt à la réponse suivante.
 - Taper un message dans une fenêtre Claude Code coupe les réponses de cette fenêtre (comme avant). `/tts stop` coupe tout.
 - Avec Kyutai (`./install.sh --kyutai`), `claude-voix` démarre le serveur tout seul s'il est arrêté (`Kyutai démarre…`, les réponses attendent), et l'arrête en quittant pour libérer la carte graphique. Si Kyutai ne répond pas, la voix Piper prend le relais.
 - La voix, le volume et le serveur viennent de `~/.claude/.tts-config` (`KYUTAI_VOICE`, `VOLUME`, `VOICE`…), relus à chaque réponse.

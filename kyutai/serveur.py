@@ -5,6 +5,8 @@
     GET  /health
 
 - `wav` : fichier WAV complet (PCM 16 bits, 24 kHz, mono), rendu une fois le texte généré.
+- `pcm` + `"decoupage": false` : flux continu, une seule génération dont chaque trame (80 ms)
+  part dès qu'elle est prête. C'est ce qu'utilise claude-voix.
 - `pcm` : PCM brut s16le 24 kHz mono, envoyé morceau par morceau (quelques phrases à la fois)
   dès que chacun est prêt. Kyutai peut être plus lent que le temps réel : les pauses tombent
   alors entre les phrases, pas au milieu des mots.
@@ -130,8 +132,10 @@ class Synthese:
             )
         return self.conditions[chemin]
 
-    def generer(self, texte: str, voix: str | None, parti=None) -> bytes:
-        """PCM s16le du texte entier. `parti()` vrai → ClientParti (génération abandonnée)."""
+    def generer(self, texte: str, voix: str | None, parti=None, sortie=None) -> bytes:
+        """PCM s16le du texte entier. `parti()` vrai → ClientParti (génération abandonnée).
+        Avec `sortie`, chaque trame (80 ms) lui est passée dès qu'elle est prête et rien n'est
+        gardé : c'est le flux continu."""
         with self.verrou:
             if parti is not None and parti():
                 raise ClientParti
@@ -141,21 +145,26 @@ class Synthese:
             t0 = time.time()
             morceaux: list[bytes] = []
             trames = 0
+            total = 0
 
             def sur_trame(trame):
-                nonlocal trames
+                nonlocal trames, total
                 trames += 1
                 if parti is not None and trames % TRAMES_ENTRE_VERIFS == 0 and parti():
                     raise ClientParti
                 if (trame != -1).all():
                     pcm = self.tts.mimi.decode(trame[:, 1:, :]).cpu().numpy()[0, 0]
-                    morceaux.append((np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes())
+                    octets = (np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes()
+                    total += len(octets)
+                    if sortie is not None:
+                        sortie(octets)
+                    else:
+                        morceaux.append(octets)
 
             with self.tts.mimi.streaming(1), torch.no_grad():
                 self.tts.generate([entrees], [cond], on_frame=sur_trame)
-            pcm = b"".join(morceaux)
-            journal(f"{len(pcm) / 2 / self.frequence:.1f} s d'audio en {time.time() - t0:.1f} s")
-            return pcm
+            journal(f"{total / 2 / self.frequence:.1f} s d'audio en {time.time() - t0:.1f} s")
+            return b"".join(morceaux)
 
 
 class Gestionnaire(BaseHTTPRequestHandler):
@@ -207,7 +216,7 @@ class Gestionnaire(BaseHTTPRequestHandler):
         voix = demande.get("voice")
 
         if format_ == "pcm":
-            return self.flux_pcm(texte, voix)
+            return self.flux_pcm(texte, voix, decoupage=demande.get("decoupage", True) is not False)
 
         try:
             pcm = self.synthese.generer(texte, voix, lambda: client_parti(self.connection))
@@ -231,13 +240,23 @@ class Gestionnaire(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(corps)
 
-    def flux_pcm(self, texte: str, voix: str | None) -> None:
+    def flux_pcm(self, texte: str, voix: str | None, decoupage: bool = True) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "audio/pcm")
         self.send_header("X-Sample-Rate", str(self.synthese.frequence))
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
+        parti = lambda: client_parti(self.connection)  # noqa: E731
+
+        def envoyer(octets: bytes) -> None:
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(octets), octets))
+
         try:
+            if not decoupage:
+                # Flux continu : une seule génération, chaque trame part dès qu'elle est prête.
+                self.synthese.generer(texte, voix, parti, envoyer)
+                self.wfile.write(b"0\r\n\r\n")
+                return
             for morceau in decouper(texte):
                 pcm = self.synthese.generer(morceau, voix, lambda: client_parti(self.connection))
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(pcm), pcm))

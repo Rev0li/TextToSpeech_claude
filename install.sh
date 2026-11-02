@@ -7,6 +7,7 @@
 #         ./install.sh --kyutai    idem + voix Kyutai (carte NVIDIA, ~4 Go de mémoire vidéo)
 #         ./install.sh --patch     ré-applique seulement le patch (après une mise à jour du plugin)
 #         ./install.sh --voix      recompile seulement claude-voix (après une mise à jour du dépôt)
+#         ./install.sh --consigne  ajoute / met à jour seulement la consigne de format dans ~/.claude/CLAUDE.md
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -41,6 +42,23 @@ build_voix() {
     echo "✓ ${HOME}/.local/bin/claude-voix"
 }
 
+# Ajoute (ou met à jour) la consigne de format des réponses dans ~/.claude/CLAUDE.md :
+# partie parlée courte, puis encart technique non lu après une ligne ---.
+install_consigne() {
+    say "Consigne de format des réponses (~/.claude/CLAUDE.md)"
+    local cible="${HOME}/.claude/CLAUDE.md" tmp
+    mkdir -p "${HOME}/.claude"
+    touch "$cible"
+    tmp="$(mktemp)"
+    # Retire l'ancien bloc s'il existe, garde tout le reste tel quel.
+    local reste
+    reste="$(awk '/<!-- claude-voix:debut/{skip=1} !skip{print} /<!-- claude-voix:fin -->/{skip=0}' "$cible")"
+    # $(…) retire les lignes vides de la fin : une seule ligne vide avant le bloc.
+    { [ -n "$reste" ] && printf '%s\n\n' "$reste"; cat "$here/config/CLAUDE-voix.md"; } > "$tmp"
+    cp "$tmp" "$cible" && rm -f "$tmp"
+    echo "✓ ${cible} (bloc claude-voix ; le reste du fichier est conservé)"
+}
+
 apply_patch() {
     say "Patch du plugin tts ${plugin_version}"
     if [ ! -d "$plugin_dir" ]; then
@@ -65,8 +83,9 @@ apply_patch() {
 case "${1:-}" in
     --patch) apply_patch; exit ;;
     --voix)  build_voix; exit ;;
+    --consigne) install_consigne; exit ;;
     --kyutai|"") ;;
-    *) echo "Usage : $0 [--kyutai | --patch | --voix]" >&2; exit 1 ;;
+    *) echo "Usage : $0 [--kyutai | --patch | --voix | --consigne]" >&2; exit 1 ;;
 esac
 
 say "Prérequis"
@@ -115,6 +134,7 @@ cp "$here/config/tts-config" "$cfg"
 echo "✓ ${cfg}"
 
 apply_patch || true
+install_consigne
 
 gestionnaire=0
 build_voix && gestionnaire=1

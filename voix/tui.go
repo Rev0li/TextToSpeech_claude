@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,8 +45,7 @@ type carte struct {
 	texte    string
 	recu     time.Time
 	etat     etat
-	chemin   string
-	duree    time.Duration
+	tp       *tampon // audio de la réponse, rempli pendant la génération
 	moteur   string
 	err      string
 	debutGen time.Time
@@ -59,29 +56,29 @@ type tick time.Time
 type etatKyutai struct{ pret bool }
 
 type modele struct {
-	cartes       []*carte
-	sel          int
-	suivre       bool
-	noms         *Noms
-	dossierAudio string
-	travaux      chan<- travail
-	lecture      *lecture
-	pause        bool
-	renommage    bool
-	saisie       textinput.Model
-	largeur      int
-	hauteur      int
-	kyutai       bool
-	ticks        int
-	prochainID   int
+	cartes     []*carte
+	sel        int
+	suivre     bool
+	noms       *Noms
+	travaux    chan<- travail
+	cps        float64 // caractères dits par seconde, appris au fil des réponses
+	lecture    *lecture
+	pause      bool
+	renommage  bool
+	saisie     textinput.Model
+	largeur    int
+	hauteur    int
+	kyutai     bool
+	ticks      int
+	prochainID int
 }
 
-func nouveauModele(noms *Noms, dossierAudio string, travaux chan<- travail) *modele {
+func nouveauModele(noms *Noms, travaux chan<- travail) *modele {
 	saisie := textinput.New()
 	saisie.Prompt = "Nouveau nom : "
 	saisie.CharLimit = 30
 	return &modele{
-		noms: noms, dossierAudio: dossierAudio, travaux: travaux,
+		noms: noms, travaux: travaux, cps: 15,
 		saisie: saisie, suivre: true, largeur: 80, hauteur: 24,
 		kyutai: kyutaiPret(lireConfig()),
 	}
@@ -115,17 +112,18 @@ func (m *modele) index(c *carte) int {
 	return -1
 }
 
-// liberer arrête tout ce qui concerne la réponse actuelle d'une carte (génération, lecture, fichier).
+// liberer arrête tout ce qui concerne la réponse actuelle d'une carte (génération, lecture).
+// La génération annulée libère aussi le serveur Kyutai pour la réponse suivante.
 func (m *modele) liberer(c *carte) {
 	if c.annuler != nil {
 		c.annuler()
 	}
+	if c.tp != nil {
+		c.tp.abandonner()
+	}
 	if m.lecture != nil && m.lecture.id == c.id {
 		m.lecture.arreter()
 		m.lecture = nil
-	}
-	if c.chemin != "" {
-		_ = os.Remove(c.chemin)
 	}
 }
 
@@ -150,10 +148,9 @@ func (m *modele) recevoir(msg messageRecu) {
 	m.prochainID++
 	ctx, annuler := context.WithCancel(context.Background())
 	c.id, c.cwd, c.texte, c.recu = m.prochainID, msg.Cwd, texte, time.Now()
-	c.etat, c.err, c.moteur, c.duree, c.annuler = enAttente, "", "", 0, annuler
-	c.chemin = filepath.Join(m.dossierAudio, fmt.Sprintf("%d.wav", c.id))
+	c.etat, c.err, c.moteur, c.annuler, c.tp = enAttente, "", "", annuler, nouveauTampon()
 	select {
-	case m.travaux <- travail{id: c.id, texte: texte, chemin: c.chemin, ctx: ctx}:
+	case m.travaux <- travail{id: c.id, texte: texte, tp: c.tp, ctx: ctx}:
 	default:
 		c.etat, c.err = echec, "file de génération pleine"
 	}
@@ -195,7 +192,8 @@ func (m *modele) supprimer() {
 	}
 }
 
-// lancerSuivant joue la carte en cours la plus ancienne, si elle est prête.
+// lancerSuivant joue la carte en cours la plus ancienne dès que possible : génération finie,
+// ou assez avancée pour que la lecture ne la rattrape pas (voir peutDemarrer).
 func (m *modele) lancerSuivant() tea.Cmd {
 	if m.lecture != nil || m.pause {
 		return nil
@@ -206,14 +204,17 @@ func (m *modele) lancerSuivant() tea.Cmd {
 			premiere = c
 		}
 	}
-	if premiere == nil || premiere.etat != pret {
-		return nil // on attend sa génération : l'ordre d'arrivée est respecté
+	if premiere == nil {
+		return nil
 	}
-	return m.jouer(premiere)
+	if premiere.etat == pret || (premiere.etat == enGeneration && peutDemarrer(premiere.tp, premiere.texte, premiere.debutGen, m.cps)) {
+		return m.jouer(premiere)
+	}
+	return nil // on attend : l'ordre d'arrivée est respecté
 }
 
 func (m *modele) jouer(c *carte) tea.Cmd {
-	l, attendre, err := demarrerLecture(c.id, c.chemin, lireConfig().Volume)
+	l, attendre, err := demarrerLecture(c.id, c.tp, lireConfig().Volume)
 	if err != nil {
 		c.etat, c.err = echec, "paplay : "+err.Error()
 		return nil
@@ -275,6 +276,7 @@ func (m *modele) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.ticks%10 == 0 || (kyutaiDemarre.Load() && m.ticks%2 == 0) {
 			cmds = append(cmds, verifierKyutai)
 		}
+		cmds = append(cmds, m.lancerSuivant()) // démarrage anticipé pendant la génération
 		return m, tea.Batch(cmds...)
 
 	case etatKyutai:
@@ -298,13 +300,23 @@ func (m *modele) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case genere:
 		c := m.parID(msg.id)
+		if c == nil || c.etat == coupe { // réponse remplacée, carte supprimée ou coupée
+			return m, m.lancerSuivant()
+		}
+		c.moteur = msg.moteur
+		audio, _, _ := c.tp.etat()
 		switch {
-		case c == nil || c.etat == coupe: // réponse remplacée, carte supprimée ou coupée
-			_ = os.Remove(msg.chemin)
-		case msg.err != nil:
+		case msg.err != nil && c.etat != enLecture:
 			c.etat, c.err = echec, msg.err.Error()
+		case msg.err != nil:
+			c.err = msg.err.Error() // la lecture joue ce qui a été produit
 		default:
-			c.etat, c.moteur, c.duree = pret, msg.moteur, msg.duree
+			if c.etat == enGeneration {
+				c.etat = pret
+			}
+			if msg.moteur == "kyutai" && audio > 2*time.Second {
+				m.cps = 0.7*m.cps + 0.3*float64(len([]rune(c.texte)))/audio.Seconds()
+			}
 		}
 		return m, m.lancerSuivant()
 
@@ -369,8 +381,8 @@ func (m *modele) touche(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "enter":
-		if c := m.selection(); c != nil && c.chemin != "" && (c.etat == lu || c.etat == passe || c.etat == coupe) {
-			if _, err := os.Stat(c.chemin); err == nil {
+		if c := m.selection(); c != nil && c.tp != nil && (c.etat == lu || c.etat == passe) {
+			if audio, fini, _ := c.tp.etat(); fini && audio > 0 {
 				m.arreterLecture(passe)
 				m.pause = false
 				return m, m.jouer(c)
@@ -441,20 +453,28 @@ func (m *modele) etiquette(c *carte) string {
 	case enAttente:
 		return styleAttente.Render("en attente")
 	case enGeneration:
-		return styleAttente.Render(fmt.Sprintf("génération %ds", int(time.Since(c.debutGen).Seconds())))
+		audio, _, _ := c.tp.etat()
+		return styleAttente.Render(fmt.Sprintf("génération %ds · %s", int(time.Since(c.debutGen).Seconds()), duree(audio)))
 	case pret:
-		return styleAttente.Render("prêt " + duree(c.duree))
+		audio, _, _ := c.tp.etat()
+		return styleAttente.Render("prêt " + duree(audio))
 	case enLecture:
 		if m.lecture != nil && m.lecture.id == c.id {
 			icone := "▶"
 			if m.pause {
 				icone = "⏸"
 			}
-			return styleLecture.Render(fmt.Sprintf("%s %s / %s", icone, duree(m.lecture.ecoule()), duree(c.duree)))
+			audio, fini, _ := c.tp.etat()
+			total := duree(audio)
+			if !fini {
+				total += "…"
+			}
+			return styleLecture.Render(fmt.Sprintf("%s %s / %s", icone, duree(m.lecture.ecoule()), total))
 		}
 		return styleLecture.Render("lecture")
 	case lu:
-		return styleDiscret.Render("lu " + duree(c.duree))
+		audio, _, _ := c.tp.etat()
+		return styleDiscret.Render("lu " + duree(audio))
 	case passe:
 		return styleDiscret.Render("passé")
 	case coupe:
