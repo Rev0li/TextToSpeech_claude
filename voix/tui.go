@@ -14,6 +14,10 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+// Une carte par fenêtre Claude Code (session). Une nouvelle réponse de la même fenêtre
+// remplace l'ancienne dans sa carte : celle-ci est coupée si elle était en attente ou en
+// lecture. Les cartes sont lues dans l'ordre d'arrivée de leur réponse.
+
 type etat int
 
 const (
@@ -30,12 +34,14 @@ const (
 func (e etat) enCours() bool { return e == enAttente || e == enGeneration || e == pret }
 
 const (
-	historiqueMax    = 200
-	largeurEtiquette = 16
+	largeurCarteMin = 46
+	colonnesMax     = 3
+	lignesCarte     = 4 // lignes de texte d'une carte
+	lignesCarteSel  = 9 // lignes de texte de la carte choisie
 )
 
-type element struct {
-	id       int
+type carte struct {
+	id       int // change à chaque nouvelle réponse
 	session  string
 	cwd      string
 	texte    string
@@ -53,7 +59,7 @@ type tick time.Time
 type etatKyutai struct{ pret bool }
 
 type modele struct {
-	elements     []*element
+	cartes       []*carte
 	sel          int
 	suivre       bool
 	noms         *Noms
@@ -91,117 +97,141 @@ func (m *modele) Init() tea.Cmd { return prochainTick() }
 
 // ---- logique ---------------------------------------------------------------
 
-func (m *modele) trouver(id int) *element {
-	for _, e := range m.elements {
-		if e.id == id {
-			return e
+func (m *modele) parID(id int) *carte {
+	for _, c := range m.cartes {
+		if c.id == id {
+			return c
 		}
 	}
 	return nil
 }
 
-func (m *modele) ajouter(msg messageRecu) {
+func (m *modele) index(c *carte) int {
+	for i, x := range m.cartes {
+		if x == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// liberer arrête tout ce qui concerne la réponse actuelle d'une carte (génération, lecture, fichier).
+func (m *modele) liberer(c *carte) {
+	if c.annuler != nil {
+		c.annuler()
+	}
+	if m.lecture != nil && m.lecture.id == c.id {
+		m.lecture.arreter()
+		m.lecture = nil
+	}
+	if c.chemin != "" {
+		_ = os.Remove(c.chemin)
+	}
+}
+
+func (m *modele) recevoir(msg messageRecu) {
 	texte := strings.TrimSpace(msg.Texte)
 	if texte == "" {
 		return
 	}
+	var c *carte
+	for _, x := range m.cartes {
+		if x.session == msg.Session {
+			c = x
+			break
+		}
+	}
+	if c == nil {
+		c = &carte{session: msg.Session}
+		m.cartes = append(m.cartes, c)
+	} else {
+		m.liberer(c) // la nouvelle réponse écrase l'ancienne
+	}
 	m.prochainID++
 	ctx, annuler := context.WithCancel(context.Background())
-	e := &element{
-		id: m.prochainID, session: msg.Session, cwd: msg.Cwd, texte: texte,
-		recu: time.Now(), etat: enAttente, annuler: annuler,
-		chemin: filepath.Join(m.dossierAudio, fmt.Sprintf("%d.wav", m.prochainID)),
-	}
-	m.elements = append(m.elements, e)
-	m.elaguer()
+	c.id, c.cwd, c.texte, c.recu = m.prochainID, msg.Cwd, texte, time.Now()
+	c.etat, c.err, c.moteur, c.duree, c.annuler = enAttente, "", "", 0, annuler
+	c.chemin = filepath.Join(m.dossierAudio, fmt.Sprintf("%d.wav", c.id))
 	select {
-	case m.travaux <- travail{id: e.id, texte: texte, chemin: e.chemin, ctx: ctx}:
+	case m.travaux <- travail{id: c.id, texte: texte, chemin: c.chemin, ctx: ctx}:
 	default:
-		e.etat, e.err = echec, "file de génération pleine"
+		c.etat, c.err = echec, "file de génération pleine"
 	}
 	if m.suivre && m.lecture == nil {
-		m.sel = len(m.elements) - 1
+		m.sel = m.index(c)
 	}
 }
 
-// elaguer garde l'historique sous historiqueMax en retirant les plus anciens éléments terminés.
-func (m *modele) elaguer() {
-	for len(m.elements) > historiqueMax {
-		i := -1
-		for j, e := range m.elements {
-			if !e.etat.enCours() && e.etat != enLecture {
-				i = j
-				break
-			}
-		}
-		if i < 0 {
-			return
-		}
-		_ = os.Remove(m.elements[i].chemin)
-		m.elements = append(m.elements[:i], m.elements[i+1:]...)
-		if m.sel > i {
-			m.sel--
-		}
-	}
-}
-
-// couper arrête les lectures d'une session (toutes si session est vide), en cours ou à venir.
+// couper arrête les cartes d'une session (toutes si session est vide), en cours ou à venir.
 func (m *modele) couper(session string) {
-	for _, e := range m.elements {
-		if session != "" && e.session != session {
+	for _, c := range m.cartes {
+		if session != "" && c.session != session {
 			continue
 		}
-		if e.etat.enCours() {
-			e.annuler()
-			e.etat = coupe
-		}
-		if e.etat == enLecture && m.lecture != nil && m.lecture.id == e.id {
-			m.lecture.arreter()
-			m.lecture = nil
-			e.etat = coupe
+		if c.etat.enCours() || c.etat == enLecture {
+			if c.annuler != nil {
+				c.annuler()
+			}
+			if m.lecture != nil && m.lecture.id == c.id {
+				m.lecture.arreter()
+				m.lecture = nil
+			}
+			c.etat = coupe
 		}
 	}
 }
 
-// lancerSuivant joue le premier élément en cours, dans l'ordre d'arrivée, s'il est prêt.
+// supprimer retire la carte choisie (sa lecture ou sa génération est arrêtée).
+func (m *modele) supprimer() {
+	c := m.selection()
+	if c == nil {
+		return
+	}
+	m.liberer(c)
+	i := m.index(c)
+	m.cartes = append(m.cartes[:i], m.cartes[i+1:]...)
+	if m.sel >= len(m.cartes) {
+		m.sel = max(len(m.cartes)-1, 0)
+	}
+}
+
+// lancerSuivant joue la carte en cours la plus ancienne, si elle est prête.
 func (m *modele) lancerSuivant() tea.Cmd {
 	if m.lecture != nil || m.pause {
 		return nil
 	}
-	for i, e := range m.elements {
-		if !e.etat.enCours() {
-			continue
+	var premiere *carte
+	for _, c := range m.cartes {
+		if c.etat.enCours() && (premiere == nil || c.recu.Before(premiere.recu)) {
+			premiere = c
 		}
-		if e.etat != pret {
-			return nil // on attend sa génération : l'ordre d'arrivée est respecté
-		}
-		return m.jouer(i)
 	}
-	return nil
+	if premiere == nil || premiere.etat != pret {
+		return nil // on attend sa génération : l'ordre d'arrivée est respecté
+	}
+	return m.jouer(premiere)
 }
 
-func (m *modele) jouer(i int) tea.Cmd {
-	e := m.elements[i]
-	l, attendre, err := demarrerLecture(e.id, e.chemin, lireConfig().Volume)
+func (m *modele) jouer(c *carte) tea.Cmd {
+	l, attendre, err := demarrerLecture(c.id, c.chemin, lireConfig().Volume)
 	if err != nil {
-		e.etat, e.err = echec, "paplay : "+err.Error()
+		c.etat, c.err = echec, "paplay : "+err.Error()
 		return nil
 	}
 	m.lecture = l
-	e.etat = enLecture
+	c.etat = enLecture
 	if m.suivre {
-		m.sel = i
+		m.sel = m.index(c)
 	}
 	return attendre
 }
 
-// arreterLecture stoppe la lecture en cours et marque l'élément avec l'état donné.
 func (m *modele) arreterLecture(nouvel etat) {
 	if m.lecture == nil {
 		return
 	}
-	if e := m.trouver(m.lecture.id); e != nil {
-		e.etat = nouvel
+	if c := m.parID(m.lecture.id); c != nil {
+		c.etat = nouvel
 	}
 	m.lecture.arreter()
 	m.lecture = nil
@@ -224,9 +254,9 @@ func (m *modele) Quitter() {
 	if m.lecture != nil {
 		m.lecture.arreter()
 	}
-	for _, e := range m.elements {
-		if e.annuler != nil {
-			e.annuler()
+	for _, c := range m.cartes {
+		if c.annuler != nil {
+			c.annuler()
 		}
 	}
 }
@@ -254,38 +284,35 @@ func (m *modele) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messageRecu:
 		switch msg.Type {
 		case "reponse":
-			m.ajouter(msg)
+			m.recevoir(msg)
 		case "couper":
 			m.couper(msg.Session)
 		}
 		return m, m.lancerSuivant()
 
 	case debutGeneration:
-		if e := m.trouver(msg.id); e != nil && e.etat == enAttente {
-			e.etat, e.debutGen = enGeneration, time.Now()
+		if c := m.parID(msg.id); c != nil && c.etat == enAttente {
+			c.etat, c.debutGen = enGeneration, time.Now()
 		}
 		return m, nil
 
 	case genere:
-		e := m.trouver(msg.id)
-		if e == nil {
-			return m, nil
-		}
+		c := m.parID(msg.id)
 		switch {
-		case e.etat == coupe:
-			_ = os.Remove(e.chemin)
+		case c == nil || c.etat == coupe: // réponse remplacée, carte supprimée ou coupée
+			_ = os.Remove(msg.chemin)
 		case msg.err != nil:
-			e.etat, e.err = echec, msg.err.Error()
+			c.etat, c.err = echec, msg.err.Error()
 		default:
-			e.etat, e.moteur, e.duree = pret, msg.moteur, msg.duree
+			c.etat, c.moteur, c.duree = pret, msg.moteur, msg.duree
 		}
 		return m, m.lancerSuivant()
 
 	case finLecture:
 		if m.lecture != nil && m.lecture.id == msg.id {
 			m.lecture = nil
-			if e := m.trouver(msg.id); e != nil && e.etat == enLecture {
-				e.etat = lu
+			if c := m.parID(msg.id); c != nil && c.etat == enLecture {
+				c.etat = lu
 			}
 		}
 		return m, m.lancerSuivant()
@@ -299,51 +326,60 @@ func (m *modele) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *modele) colonnes() int {
+	return min(max(m.largeur/largeurCarteMin, 1), colonnesMax)
+}
+
+func (m *modele) deplacer(pas int) {
+	if len(m.cartes) == 0 {
+		return
+	}
+	m.sel = min(max(m.sel+pas, 0), len(m.cartes)-1)
+	m.suivre = false
+}
+
 func (m *modele) touche(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case " ", "p":
 		return m, m.basculerPause()
-	case "s", "right":
+	case "s":
 		m.arreterLecture(passe)
 		return m, m.lancerSuivant()
 	case "c":
 		m.couper("")
 		return m, nil
+	case "d", "delete", "backspace":
+		m.supprimer()
+		return m, m.lancerSuivant()
+	case "left", "h":
+		m.deplacer(-1)
+	case "right", "l":
+		m.deplacer(1)
 	case "up", "k":
-		if m.sel > 0 {
-			m.sel--
-		}
-		m.suivre = false
+		m.deplacer(-m.colonnes())
 	case "down", "j":
-		if m.sel < len(m.elements)-1 {
-			m.sel++
-		}
-		m.suivre = false
+		m.deplacer(m.colonnes())
 	case "esc":
 		m.suivre = true
 		if m.lecture != nil {
-			for i, e := range m.elements {
-				if e.id == m.lecture.id {
-					m.sel = i
-				}
+			if c := m.parID(m.lecture.id); c != nil {
+				m.sel = m.index(c)
 			}
-		} else if len(m.elements) > 0 {
-			m.sel = len(m.elements) - 1
 		}
 	case "enter":
-		if e := m.selection(); e != nil && e.chemin != "" && (e.etat == lu || e.etat == passe || e.etat == coupe) {
-			if _, err := os.Stat(e.chemin); err == nil {
+		if c := m.selection(); c != nil && c.chemin != "" && (c.etat == lu || c.etat == passe || c.etat == coupe) {
+			if _, err := os.Stat(c.chemin); err == nil {
 				m.arreterLecture(passe)
 				m.pause = false
-				return m, m.jouer(m.sel)
+				return m, m.jouer(c)
 			}
 		}
 	case "r":
-		if e := m.selection(); e != nil {
+		if c := m.selection(); c != nil {
 			m.renommage = true
-			m.saisie.SetValue(m.noms.Nom(e.session, e.cwd))
+			m.saisie.SetValue(m.noms.Nom(c.session, c.cwd))
 			m.saisie.CursorEnd()
 			return m, m.saisie.Focus()
 		}
@@ -359,8 +395,8 @@ func (m *modele) toucheRenommage(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		nom := strings.TrimSpace(m.saisie.Value())
-		if e := m.selection(); e != nil && nom != "" {
-			_ = m.noms.Renommer(e.session, e.cwd, nom)
+		if c := m.selection(); c != nil && nom != "" {
+			_ = m.noms.Renommer(c.session, c.cwd, nom)
 		}
 		m.renommage = false
 		m.saisie.Blur()
@@ -371,25 +407,28 @@ func (m *modele) toucheRenommage(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *modele) selection() *element {
-	if m.sel < 0 || m.sel >= len(m.elements) {
+func (m *modele) selection() *carte {
+	if m.sel < 0 || m.sel >= len(m.cartes) {
 		return nil
 	}
-	return m.elements[m.sel]
+	return m.cartes[m.sel]
 }
 
 // ---- affichage -------------------------------------------------------------
 
 var (
-	styleTitre   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	couleurSel     = lipgloss.Color("212")
+	couleurLecture = lipgloss.Color("42")
+	couleurCadre   = lipgloss.Color("240")
+
+	styleTitre   = lipgloss.NewStyle().Bold(true).Foreground(couleurSel)
 	styleDiscret = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	styleNom     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	styleLecture = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	styleLecture = lipgloss.NewStyle().Foreground(couleurLecture).Bold(true)
 	styleAttente = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	styleErreur  = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	styleSel     = lipgloss.NewStyle().Background(lipgloss.Color("236"))
-	styleCadre   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1)
 	styleAide    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	styleCarte   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 )
 
 func duree(d time.Duration) string {
@@ -397,25 +436,25 @@ func duree(d time.Duration) string {
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
 
-func (m *modele) etiquette(e *element) string {
-	switch e.etat {
+func (m *modele) etiquette(c *carte) string {
+	switch c.etat {
 	case enAttente:
 		return styleAttente.Render("en attente")
 	case enGeneration:
-		return styleAttente.Render(fmt.Sprintf("génération %ds", int(time.Since(e.debutGen).Seconds())))
+		return styleAttente.Render(fmt.Sprintf("génération %ds", int(time.Since(c.debutGen).Seconds())))
 	case pret:
-		return styleAttente.Render("prêt " + duree(e.duree))
+		return styleAttente.Render("prêt " + duree(c.duree))
 	case enLecture:
-		if m.lecture != nil && m.lecture.id == e.id {
+		if m.lecture != nil && m.lecture.id == c.id {
 			icone := "▶"
 			if m.pause {
 				icone = "⏸"
 			}
-			return styleLecture.Render(fmt.Sprintf("%s %s / %s", icone, duree(m.lecture.ecoule()), duree(e.duree)))
+			return styleLecture.Render(fmt.Sprintf("%s %s / %s", icone, duree(m.lecture.ecoule()), duree(c.duree)))
 		}
 		return styleLecture.Render("lecture")
 	case lu:
-		return styleDiscret.Render("lu " + duree(e.duree))
+		return styleDiscret.Render("lu " + duree(c.duree))
 	case passe:
 		return styleDiscret.Render("passé")
 	case coupe:
@@ -426,8 +465,46 @@ func (m *modele) etiquette(e *element) string {
 	return ""
 }
 
+func (m *modele) rendreCarte(c *carte, largeur int, choisie bool) string {
+	interieur := largeur - 4 // bordure + marge
+	nom := styleNom.Render(runewidth.Truncate(m.noms.Nom(c.session, c.cwd), interieur/2, "…"))
+	heure := styleDiscret.Render(c.recu.Format("15:04"))
+	etiq := m.etiquette(c)
+	espace := max(interieur-lipgloss.Width(nom)-lipgloss.Width(etiq)-lipgloss.Width(heure)-2, 1)
+	entete := nom + " " + etiq + strings.Repeat(" ", espace) + " " + heure
+
+	texte := c.texte
+	if c.err != "" {
+		texte = styleErreur.Render(c.err) + "\n" + texte
+	}
+	limite := lignesCarte
+	if choisie {
+		limite = lignesCarteSel
+	}
+	lignes := strings.Split(lipgloss.NewStyle().Width(interieur).Render(texte), "\n")
+	if len(lignes) > limite {
+		lignes = append(lignes[:limite-1], "…")
+	}
+	for len(lignes) < lignesCarte {
+		lignes = append(lignes, "")
+	}
+	corps := strings.Join(lignes, "\n")
+	if !choisie {
+		corps = styleDiscret.Render(corps)
+	}
+
+	bord := couleurCadre
+	switch {
+	case choisie:
+		bord = couleurSel
+	case c.etat == enLecture:
+		bord = couleurLecture
+	}
+	return styleCarte.BorderForeground(bord).Width(largeur - 2).Render(entete + "\n" + corps)
+}
+
 func (m *modele) View() string {
-	l := max(m.largeur, 40)
+	l := max(m.largeur, largeurCarteMin)
 	var b strings.Builder
 
 	moteur := styleErreur.Render("Kyutai arrêté → Piper")
@@ -441,56 +518,45 @@ func (m *modele) View() string {
 	if m.pause {
 		etatGlobal = styleAttente.Render("  ⏸ en pause")
 	}
-	b.WriteString(styleTitre.Render("🎙 claude-voix") + "   " + moteur + etatGlobal + "\n\n")
+	b.WriteString(styleTitre.Render("🎙 claude-voix") + "   " + moteur + etatGlobal + "\n")
 
-	// Liste : on garde de la place pour le détail et l'aide.
-	place := max(m.hauteur-14, 3)
-	debut := 0
-	if len(m.elements) > place {
-		debut = min(max(m.sel-place/2, 0), len(m.elements)-place)
-	}
-	if len(m.elements) == 0 {
-		b.WriteString(styleDiscret.Render("  En attente des réponses de Claude Code…") + "\n")
-	}
-	for i := debut; i < len(m.elements) && i < debut+place; i++ {
-		e := m.elements[i]
-		nom := runewidth.Truncate(m.noms.Nom(e.session, e.cwd), 12, "…")
-		nom = styleNom.Render(runewidth.FillRight(nom, 12))
-		etiq := m.etiquette(e)
-		etiq += strings.Repeat(" ", max(largeurEtiquette-lipgloss.Width(etiq), 0))
-		reste := l - 12 - largeurEtiquette - 13
-		apercu := strings.Join(strings.Fields(e.texte), " ")
-		apercu = styleDiscret.Render(runewidth.Truncate(apercu, max(reste, 5), "…"))
-		ligne := fmt.Sprintf(" %s  %s  %s  %s", e.recu.Format("15:04"), nom, etiq, apercu)
-		if i == m.sel {
-			ligne = styleSel.Render(runewidth.FillRight(ligne, l-1))
+	if len(m.cartes) == 0 {
+		b.WriteString("\n" + styleDiscret.Render("  En attente des réponses de Claude Code…") + "\n")
+	} else {
+		cols := m.colonnes()
+		largeur := l / cols
+		var rangees []string
+		for debut := 0; debut < len(m.cartes); debut += cols {
+			var rangee []string
+			for i := debut; i < min(debut+cols, len(m.cartes)); i++ {
+				rangee = append(rangee, m.rendreCarte(m.cartes[i], largeur, i == m.sel))
+			}
+			rangees = append(rangees, lipgloss.JoinHorizontal(lipgloss.Top, rangee...))
 		}
-		b.WriteString(ligne + "\n")
-	}
-
-	// Détail de l'élément sélectionné.
-	if e := m.selection(); e != nil {
-		texte := e.texte
-		if e.err != "" {
-			texte = styleErreur.Render(e.err) + "\n\n" + texte
+		// Défilement : la rangée de la carte choisie reste visible.
+		dispo := max(m.hauteur-4, 6)
+		rangSel := min(m.sel/cols, len(rangees)-1)
+		debut := 0
+		for debut < rangSel && lipgloss.Height(strings.Join(rangees[debut:rangSel+1], "\n")) > dispo {
+			debut++
 		}
-		lignes := strings.Split(lipgloss.NewStyle().Width(l-6).Render(texte), "\n")
-		if len(lignes) > 6 {
-			lignes = append(lignes[:6], styleDiscret.Render("…"))
+		var visibles []string
+		for i := debut; i < len(rangees); i++ {
+			essai := append(append([]string{}, visibles...), rangees[i])
+			if len(visibles) > 0 && lipgloss.Height(strings.Join(essai, "\n")) > dispo {
+				break
+			}
+			visibles = essai
 		}
-		titre := styleNom.Render(m.noms.Nom(e.session, e.cwd))
-		if e.moteur != "" {
-			titre += styleDiscret.Render(" · " + e.moteur)
-		}
-		b.WriteString("\n" + styleCadre.Width(l-2).Render(titre+"\n"+strings.Join(lignes, "\n")) + "\n")
+		b.WriteString(strings.Join(visibles, "\n") + "\n")
 	}
 
 	if m.renommage {
-		b.WriteString("\n" + m.saisie.View() + styleAide.Render("   entrée valider · échap annuler") + "\n")
+		b.WriteString(m.saisie.View() + styleAide.Render("   entrée valider · échap annuler") + "\n")
 	} else {
-		aide := "espace pause · s suivant · c tout couper · entrée relire · r renommer · q quitter\n" +
-			"↑↓ parcourir · échap suivre la lecture"
-		b.WriteString("\n" + styleAide.Width(l).Render(aide) + "\n")
+		aide := "espace pause · s suivant · c tout couper · d supprimer · entrée relire · r renommer · q quitter\n" +
+			"flèches choisir une carte · échap suivre la lecture"
+		b.WriteString(styleAide.Width(l).Render(aide) + "\n")
 	}
 	return b.String()
 }

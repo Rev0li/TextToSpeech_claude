@@ -32,6 +32,7 @@ type debutGeneration struct{ id int }
 
 type genere struct {
 	id     int
+	chemin string
 	moteur string
 	duree  time.Duration
 	err    error
@@ -49,7 +50,7 @@ func generateur(travaux <-chan travail, p *tea.Program) {
 		attendreKyutai(t.ctx)
 		p.Send(debutGeneration{t.id})
 		moteur, err := generer(t.ctx, lireConfig(), t.texte, t.chemin)
-		p.Send(genere{id: t.id, moteur: moteur, duree: dureeWav(t.chemin), err: err})
+		p.Send(genere{id: t.id, chemin: t.chemin, moteur: moteur, duree: dureeWav(t.chemin), err: err})
 	}
 }
 

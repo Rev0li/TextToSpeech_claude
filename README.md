@@ -347,7 +347,7 @@ Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `
 
 ## 13. claude-voix, le gestionnaire de conversation
 
-`claude-voix` est une petite interface en terminal ([Bubble Tea](https://github.com/charmbracelet/bubbletea)) qui reçoit les réponses de toutes tes fenêtres Claude Code, les fait générer, puis les lit l'une après l'autre.
+`claude-voix` est une petite interface en terminal ([Bubble Tea](https://github.com/charmbracelet/bubbletea)) qui reçoit les réponses de toutes tes fenêtres Claude Code, les fait générer, puis les lit l'une après l'autre. Chaque fenêtre a sa **carte** : quand une nouvelle réponse arrive de la même fenêtre, elle remplace l'ancienne (qui est coupée si elle n'était pas finie).
 
 ```bash
 claude-voix
@@ -355,26 +355,27 @@ claude-voix
 
 ```
 🎙 claude-voix   Kyutai prêt (conteur)
- 14:35  auth          lu 0:10           Voici une réponse plus longue pour tester la pause…
- 14:35  songsurf      ▶ 0:02 / 0:04     Deuxième réponse, depuis SongSurf.
- 14:36  autre         génération 3s     Troisième réponse…
-╭──────────────────────────────────────────────────────────────────╮
-│ songsurf · kyutai                                                │
-│ Deuxième réponse, depuis SongSurf.                               │
-╰──────────────────────────────────────────────────────────────────╯
-espace pause · s suivant · c tout couper · entrée relire · r renommer · q quitter
-↑↓ parcourir · échap suivre la lecture
+╭──────────────────────────────────────╮╭──────────────────────────────────────╮
+│ auth ▶ 0:01 / 0:06             15:39 ││ songsurf génération 2s         15:39 │
+│ Première réponse de la fenêtre auth, ││ Réponse de SongSurf.                 │
+│ assez longue pour…                   ││                                      │
+╰──────────────────────────────────────╯╰──────────────────────────────────────╯
+espace pause · s suivant · c tout couper · d supprimer · entrée relire · r renommer · q quitter
+flèches choisir une carte · échap suivre la lecture
 ```
+
+Les cartes se rangent en une à trois colonnes selon la largeur du terminal. La carte choisie (bord rose) montre plus de texte, celle en lecture a un bord vert.
 
 | Touche | Effet |
 |---|---|
 | `espace` (ou `p`) | pause / reprise de la lecture en cours (ou de la file) |
-| `s` ou `→` | passe à la réponse suivante |
+| `s` | passe à la réponse suivante |
 | `c` | coupe tout : lecture en cours et réponses en attente |
-| `↑` `↓` | parcourir ; le cadre du bas montre le texte de la réponse choisie |
-| `échap` | revenir à la réponse en cours de lecture |
-| `entrée` | relire la réponse choisie |
-| `r` | renommer la fenêtre de la réponse choisie |
+| `d` (ou `suppr`) | supprime la carte choisie (sa lecture ou sa génération s'arrête) |
+| flèches | choisir une carte |
+| `échap` | revenir à la carte en cours de lecture |
+| `entrée` | relire la réponse de la carte choisie |
+| `r` | renommer la fenêtre de la carte choisie |
 | `q` | quitter |
 
 **Le nom des fenêtres.** Chaque réponse porte le nom de la fenêtre Claude Code qui l'a écrite : au départ, le nom de son dossier (`rev0auth`, `SongSurf`…). Touche `r` pour le changer (par exemple `auth`). Le nom vaut pour cette session et pour les prochaines sessions lancées dans le même dossier. Il est gardé dans `~/.config/claude-voix/noms.json`.
@@ -382,7 +383,7 @@ espace pause · s suivant · c tout couper · entrée relire · r renommer · q 
 **Fermé, rien n'est lu.** C'est l'ouverture de `claude-voix` qui déclenche la lecture. Le plugin lui envoie chaque réponse par un socket local (`$XDG_RUNTIME_DIR/claude-voix.sock`, accessible à toi seul). Si `claude-voix` est fermé, la réponse n'est pas lue. Pour revenir à la lecture directe, sans gestionnaire : `GESTIONNAIRE=false` dans `~/.claude/.tts-config`.
 
 **Comportement.**
-- Les réponses sont lues dans leur ordre d'arrivée. La suivante est générée pendant que la précédente est lue.
+- Les cartes sont lues dans l'ordre d'arrivée de leur réponse. La suivante est générée pendant que la précédente est lue.
 - Taper un message dans une fenêtre Claude Code coupe les réponses de cette fenêtre (comme avant). `/tts stop` coupe tout.
 - Avec Kyutai (`./install.sh --kyutai`), `claude-voix` démarre le serveur tout seul s'il est arrêté (`Kyutai démarre…`, les réponses attendent), et l'arrête en quittant pour libérer la carte graphique. Si Kyutai ne répond pas, la voix Piper prend le relais.
 - La voix, le volume et le serveur viennent de `~/.claude/.tts-config` (`KYUTAI_VOICE`, `VOLUME`, `VOICE`…), relus à chaque réponse.
