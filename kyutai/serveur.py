@@ -54,15 +54,15 @@ MORCEAU = 100
 VOIX_DETAILS = {
     "livre": ("cml-tts/fr/10087_11650_000028-0002_enhanced.wav", "femme", "douce, posée"),
     "lectrice": ("cml-tts/fr/5830_4703_000037-0001_enhanced.wav", "femme", "plus claire"),
-    "fr-2154": ("cml-tts/fr/2154_2576_000020-0003_enhanced.wav", "femme", "184 Hz"),
-    "fr-5476": ("cml-tts/fr/5476_3103_000072-0001_enhanced.wav", "femme", "186 Hz"),
+    "conteuse": ("cml-tts/fr/2154_2576_000020-0003_enhanced.wav", "femme", "médium"),
+    "narratrice": ("cml-tts/fr/5476_3103_000072-0001_enhanced.wav", "femme", "médium, chaude"),
     "conteur": ("cml-tts/fr/2114_1656_000053-0001_enhanced.wav", "homme", "chaleureuse"),
     "narrateur": ("cml-tts/fr/1406_1028_000009-0003_enhanced.wav", "homme", "grave"),
     "recitant": ("cml-tts/fr/4937_3731_000004-0001_enhanced.wav", "homme", "plus claire"),
-    "fr-928": ("cml-tts/fr/928_486_000075-0001_enhanced.wav", "homme", "133 Hz"),
-    "fr-1770": ("cml-tts/fr/1770_1028_000036-0002_enhanced.wav", "homme", "125 Hz"),
-    "fr-5790": ("cml-tts/fr/5790_4893_000052-0001_enhanced.wav", "homme", "116 Hz"),
-    "fr-4193": ("cml-tts/fr/4193_3103_000004-0001_enhanced.wav", "homme", "85 Hz"),
+    "lecteur": ("cml-tts/fr/928_486_000075-0001_enhanced.wav", "homme", "claire"),
+    "chroniqueur": ("cml-tts/fr/1770_1028_000036-0002_enhanced.wav", "homme", "médium"),
+    "orateur": ("cml-tts/fr/5790_4893_000052-0001_enhanced.wav", "homme", "médium grave"),
+    "baryton": ("cml-tts/fr/4193_3103_000004-0001_enhanced.wav", "homme", "très grave"),
 }
 # Les 24 autres voix françaises nettoyées du même jeu, à tester avant d'en ajouter au menu :
 # (nom court, chemin, genre, hauteur médiane en Hz mesurée sur l'extrait de référence).
@@ -94,6 +94,8 @@ VOIX_AUTRES = [
 ]
 VOIX = {nom: chemin for nom, (chemin, _, _) in VOIX_DETAILS.items()}
 VOIX.update({nom: chemin for nom, chemin, _, _ in VOIX_AUTRES})
+# Chaque voix répond aussi à son nom technique « fr-<locuteur> » (ex. fr-4193 = baryton).
+VOIX.update({"fr-" + chemin.split("/")[-1].split("_")[0]: chemin for chemin in list(VOIX.values())})
 VOIX_DEFAUT = os.environ.get("KYUTAI_VOICE", "livre")
 
 

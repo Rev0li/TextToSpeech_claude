@@ -343,19 +343,19 @@ Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `
 |---|---|---|
 | `livre` (par défaut) | femme | douce, posée |
 | `lectrice` | femme | plus claire |
-| `fr-2154` | femme | 184 Hz |
-| `fr-5476` | femme | 186 Hz |
+| `conteuse` | femme | médium |
+| `narratrice` | femme | médium, chaude |
 | `conteur` | homme | chaleureuse |
 | `narrateur` | homme | grave |
 | `recitant` | homme | plus claire |
-| `fr-928` | homme | 133 Hz |
-| `fr-1770` | homme | 125 Hz |
-| `fr-5790` | homme | 116 Hz |
-| `fr-4193` | homme | 85 Hz |
+| `lecteur` | homme | claire |
+| `chroniqueur` | homme | médium |
+| `orateur` | homme | médium grave |
+| `baryton` | homme | très grave |
 
 Le plus simple pour les écouter et choisir : la touche `v` de [`claude-voix`](#13-claude-voix-le-gestionnaire-de-conversation).
 
-Un deuxième onglet (touche `tab`), **Plus de voix**, liste les 24 autres voix françaises nettoyées du même jeu, rangées par genre et par hauteur, pour les essayer. Elles sont utilisables telles quelles (`KYUTAI_VOICE=fr-6318`). Pour en ajouter une au menu, il suffit de l'inscrire dans `VOIX_DETAILS` de [`kyutai/serveur.py`](./kyutai/serveur.py) avec un nom et un timbre. On peut aussi donner n'importe quel chemin du dépôt [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices), par exemple `cml-tts/fr/…_enhanced.wav` (140 voix françaises), sans le suffixe `.1e68beda@240.safetensors`. Une voix inconnue retombe sur la voix par défaut.
+Un deuxième onglet (touche `tab`), **Plus de voix**, liste les 24 autres voix françaises nettoyées du même jeu, rangées par genre et par hauteur, pour les essayer. Elles sont utilisables telles quelles (`KYUTAI_VOICE=fr-6318`). Chaque voix du menu répond aussi à son nom technique (`fr-4193` = `baryton`). Pour en ajouter une au menu, il suffit de l'inscrire dans `VOIX_DETAILS` de [`kyutai/serveur.py`](./kyutai/serveur.py) avec un nom et un timbre. On peut aussi donner n'importe quel chemin du dépôt [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices), par exemple `cml-tts/fr/…_enhanced.wav` (140 voix françaises), sans le suffixe `.1e68beda@240.safetensors`. Une voix inconnue retombe sur la voix par défaut.
 
 **Réglages** (variables d'environnement) : `KYUTAI_PORT` (8002), `KYUTAI_VOICE` (`livre`), `KYUTAI_DEVICE` (`cuda`), `KYUTAI_NQ` (32 ; 16 est environ 30 % plus rapide mais moins fidèle).
 
