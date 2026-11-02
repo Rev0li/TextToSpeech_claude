@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Installe la lecture vocale en français des réponses de Claude Code :
 # Piper, le plugin tts (version testée 0.1.6), une voix française,
-# la config du dépôt et le patch (message final seulement, file d'attente).
+# la config du dépôt, le patch et le gestionnaire de conversation claude-voix.
 #
-# Usage : ./install.sh            installation complète
-#         ./install.sh --patch    ré-applique seulement le patch (après une mise à jour du plugin)
+# Usage : ./install.sh             installation complète (voix Piper)
+#         ./install.sh --kyutai    idem + voix Kyutai (carte NVIDIA, ~4 Go de mémoire vidéo)
+#         ./install.sh --patch     ré-applique seulement le patch (après une mise à jour du plugin)
+#         ./install.sh --voix      recompile seulement claude-voix (après une mise à jour du dépôt)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -14,6 +16,30 @@ voice="siwis"
 
 say()  { printf '\n\033[1;36m▸ %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m! %s\033[0m\n' "$*" >&2; }
+
+# Écrit CLÉ=valeur dans la config tts, en gardant les autres clés.
+set_cfg() {
+    local cfg="${HOME}/.claude/.tts-config"
+    if grep -q "^$1=" "$cfg" 2>/dev/null; then
+        sed -i "s|^$1=.*|$1=$2|" "$cfg"
+    else
+        printf '%s=%s\n' "$1" "$2" >> "$cfg"
+    fi
+}
+
+# Compile le gestionnaire claude-voix (Go) dans ~/.local/bin.
+build_voix() {
+    say "Gestionnaire de conversation claude-voix"
+    if ! command -v go >/dev/null; then
+        warn "Go introuvable : claude-voix n'est pas installé, les réponses seront lues directement."
+        echo "Pour l'avoir : sudo dnf install -y golang   (Debian : sudo apt install -y golang)   puis ./install.sh --voix"
+        return 1
+    fi
+    mkdir -p "${HOME}/.local/bin"
+    (cd "$here/voix" && go build -trimpath -ldflags "-s -w" -o "${HOME}/.local/bin/claude-voix" .)
+    set_cfg GESTIONNAIRE true
+    echo "✓ ${HOME}/.local/bin/claude-voix"
+}
 
 apply_patch() {
     say "Patch du plugin tts ${plugin_version}"
@@ -36,10 +62,12 @@ apply_patch() {
     echo "✓ Appliqué (originaux sauvegardés en .orig)."
 }
 
-if [ "${1:-}" = "--patch" ]; then
-    apply_patch
-    exit
-fi
+case "${1:-}" in
+    --patch) apply_patch; exit ;;
+    --voix)  build_voix; exit ;;
+    --kyutai|"") ;;
+    *) echo "Usage : $0 [--kyutai | --patch | --voix]" >&2; exit 1 ;;
+esac
 
 say "Prérequis"
 missing=()
@@ -88,5 +116,22 @@ echo "✓ ${cfg}"
 
 apply_patch || true
 
+gestionnaire=0
+build_voix && gestionnaire=1
+
+if [ "${1:-}" = "--kyutai" ]; then
+    say "Voix Kyutai"
+    "$here/kyutai/install.sh"
+    set_cfg ENGINE kyutai
+    set_cfg KYUTAI_SCRIPT "$here/kyutai/kyutai.sh"
+    echo "✓ Kyutai configuré (claude-voix démarre et arrête le serveur tout seul)"
+fi
+
 say "Terminé"
-echo "Redémarre Claude Code une fois (/exit puis claude), puis teste avec /tts test."
+echo "1. Redémarre Claude Code une fois (/exit puis claude)."
+if [ "$gestionnaire" = 1 ]; then
+    echo "2. Dans un autre terminal, lance : claude-voix"
+    echo "   Les réponses de Claude Code y arrivent et sont lues. Fermé, rien n'est lu."
+else
+    echo "2. Teste avec /tts test."
+fi

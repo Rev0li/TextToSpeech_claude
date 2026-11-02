@@ -17,10 +17,13 @@ On s'appuie sur :
 ```bash
 git clone https://github.com/Rev0li/TextToSpeech_claude.git
 cd TextToSpeech_claude
-./install.sh
+./install.sh            # voix Piper (tout ordinateur)
+./install.sh --kyutai   # ou : voix Kyutai, plus naturelle (carte NVIDIA)
 ```
 
-Le script installe Piper, le plugin `tts`, la voix `fr_FR-siwis`, copie [`config/tts-config`](./config/tts-config) dans `~/.claude/.tts-config` (l'ancienne config est gardée en `.bak`) et applique le [patch](#11-le-patch-message-final-file-dattente). Il ne refait pas ce qui est déjà en place, tu peux donc le relancer sans risque.
+Puis redémarre Claude Code une fois et, dans un autre terminal, lance **`claude-voix`** : les réponses de Claude Code y arrivent et sont lues à voix haute (voir [section 13](#13-claude-voix-le-gestionnaire-de-conversation)).
+
+Le script installe Piper, le plugin `tts`, la voix `fr_FR-siwis`, copie [`config/tts-config`](./config/tts-config) dans `~/.claude/.tts-config` (l'ancienne config est gardée en `.bak`), applique le [patch](#11-le-patch-message-final-file-dattente) et compile le gestionnaire `claude-voix` (il faut Go : `sudo dnf install -y golang`). Avec `--kyutai`, il installe aussi le serveur Kyutai. Il ne refait pas ce qui est déjà en place, tu peux donc le relancer sans risque. Après une mise à jour du dépôt : `git pull` puis `./install.sh --voix` (recompile `claude-voix`) et `./install.sh --patch`.
 
 Le reste de ce README détaille chaque étape, si tu préfères tout faire à la main.
 
@@ -40,6 +43,7 @@ Le reste de ce README détaille chaque étape, si tu préfères tout faire à la
 10. [Désinstaller](#10-désinstaller)
 11. [Le patch (message final, file d'attente)](#11-le-patch-message-final-file-dattente)
 12. [Voix Kyutai (serveur local, carte NVIDIA)](#12-voix-kyutai-serveur-local-carte-nvidia)
+13. [claude-voix, le gestionnaire de conversation](#13-claude-voix-le-gestionnaire-de-conversation)
 
 ---
 
@@ -270,6 +274,7 @@ Le fichier [`patches/tts-0.1.6.patch`](./patches/tts-0.1.6.patch) change donc ce
 - `hooks/speak.sh` : ne lit que le **dernier message** du tour, c'est-à-dire le résumé final. Il le prend directement dans ce que Claude Code transmet au hook (`last_assistant_message`) ; avec une version de Claude Code trop ancienne pour fournir ce champ, il le cherche dans la transcription, en attendant jusqu'à 3 s que la réponse y soit écrite ;
 - `scripts/lib.sh` : avant la lecture, retire les liens, les adresses web, les chemins de fichiers (`~/…`, `/home/…`, `/tmp/…`), les lignes de tableau et les puces ;
 - **encart technique** : une ligne `---` (hors bloc de code) arrête la lecture. Tout ce qui suit s'affiche mais n'est pas lu (voir [section 12](#12-voix-kyutai-serveur-local-carte-nvidia)) ;
+- **gestionnaire** : avec `GESTIONNAIRE=true`, chaque réponse part au gestionnaire `claude-voix` au lieu d'être lue directement ; s'il est fermé, rien n'est lu (voir [section 13](#13-claude-voix-le-gestionnaire-de-conversation)) ;
 - **moteur Kyutai** : avec `ENGINE=kyutai`, la lecture passe par le serveur Kyutai local, message complet ou au fil de l'eau (`KYUTAI_MODE`) ; s'il ne répond pas, retour à Piper (voir [section 12](#12-voix-kyutai-serveur-local-carte-nvidia)) ;
 - **file d'attente** : toutes les lectures, de tous les terminaux, passent l'une après l'autre (verrou `flock` sur `$XDG_RUNTIME_DIR/claude-tts.lock`). Le carillon sonne au début de chaque lecture, quand son tour arrive, ce qui permet de repérer le passage d'une réponse à l'autre ;
 - `hooks/interrupt.sh` : taper un message ne coupe que les réponses **de ce terminal** (en cours ou en attente) ; celles des autres terminaux restent dans la file. `/tts stop` coupe tout et vide la file.
@@ -340,11 +345,58 @@ Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `
 
 **Matériel.** Mesuré sur une GTX 1060 6 Go (Pascal) : ~4 Go de mémoire vidéo au repos, ~5 Go pendant la génération, et environ 1,6 fois plus lent que le temps réel, plus ~2 s par phrase. Sur une carte aussi ancienne, ce serveur ne cohabite pas avec un modèle de langage local. Il convient quand le cerveau tourne ailleurs (Claude Code par exemple). Les cartes récentes (RTX 30xx et plus) vont nettement plus vite. Pour les cartes Pascal, `kyutai.sh` désactive `torch.compile` (`NO_TORCH_COMPILE=1`), que Triton refuse sur ces cartes, et `install.sh` installe PyTorch en build CUDA 12.6, qui les gère encore.
 
+## 13. claude-voix, le gestionnaire de conversation
+
+`claude-voix` est une petite interface en terminal ([Bubble Tea](https://github.com/charmbracelet/bubbletea)) qui reçoit les réponses de toutes tes fenêtres Claude Code, les fait générer, puis les lit l'une après l'autre.
+
+```bash
+claude-voix
+```
+
+```
+🎙 claude-voix   Kyutai prêt (conteur)
+ 14:35  auth          lu 0:10           Voici une réponse plus longue pour tester la pause…
+ 14:35  songsurf      ▶ 0:02 / 0:04     Deuxième réponse, depuis SongSurf.
+ 14:36  autre         génération 3s     Troisième réponse…
+╭──────────────────────────────────────────────────────────────────╮
+│ songsurf · kyutai                                                │
+│ Deuxième réponse, depuis SongSurf.                               │
+╰──────────────────────────────────────────────────────────────────╯
+espace pause · s suivant · c tout couper · entrée relire · r renommer · q quitter
+↑↓ parcourir · échap suivre la lecture
+```
+
+| Touche | Effet |
+|---|---|
+| `espace` (ou `p`) | pause / reprise de la lecture en cours (ou de la file) |
+| `s` ou `→` | passe à la réponse suivante |
+| `c` | coupe tout : lecture en cours et réponses en attente |
+| `↑` `↓` | parcourir ; le cadre du bas montre le texte de la réponse choisie |
+| `échap` | revenir à la réponse en cours de lecture |
+| `entrée` | relire la réponse choisie |
+| `r` | renommer la fenêtre de la réponse choisie |
+| `q` | quitter |
+
+**Le nom des fenêtres.** Chaque réponse porte le nom de la fenêtre Claude Code qui l'a écrite : au départ, le nom de son dossier (`rev0auth`, `SongSurf`…). Touche `r` pour le changer (par exemple `auth`). Le nom vaut pour cette session et pour les prochaines sessions lancées dans le même dossier. Il est gardé dans `~/.config/claude-voix/noms.json`.
+
+**Fermé, rien n'est lu.** C'est l'ouverture de `claude-voix` qui déclenche la lecture. Le plugin lui envoie chaque réponse par un socket local (`$XDG_RUNTIME_DIR/claude-voix.sock`, accessible à toi seul). Si `claude-voix` est fermé, la réponse n'est pas lue. Pour revenir à la lecture directe, sans gestionnaire : `GESTIONNAIRE=false` dans `~/.claude/.tts-config`.
+
+**Comportement.**
+- Les réponses sont lues dans leur ordre d'arrivée. La suivante est générée pendant que la précédente est lue.
+- Taper un message dans une fenêtre Claude Code coupe les réponses de cette fenêtre (comme avant). `/tts stop` coupe tout.
+- Avec Kyutai (`./install.sh --kyutai`), `claude-voix` démarre le serveur tout seul s'il est arrêté (`Kyutai démarre…`, les réponses attendent), et l'arrête en quittant pour libérer la carte graphique. Si Kyutai ne répond pas, la voix Piper prend le relais.
+- La voix, le volume et le serveur viennent de `~/.claude/.tts-config` (`KYUTAI_VOICE`, `VOLUME`, `VOICE`…), relus à chaque réponse.
+
+**Commandes internes** (utilisées par le plugin) : `claude-voix envoyer --session ID --cwd DOSSIER < texte` et `claude-voix couper [--session ID]`.
+
+**Recompiler** après une mise à jour : `./install.sh --voix` (les sources sont dans [`voix/`](./voix)).
+
 ---
 
 ## Crédits
 
 - Plugin `tts` : [cadrianmae/claude-marketplace](https://github.com/cadrianmae/claude-marketplace) (MIT)
+- Interface `claude-voix` : [Bubble Tea, Lip Gloss, Bubbles](https://github.com/charmbracelet) de Charm (MIT)
 - Moteur : [Piper](https://github.com/rhasspy/piper) ; voix : [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). Chaque voix a sa propre licence, indiquée dans sa fiche Hugging Face.
 - Voix Kyutai : modèle [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) (CC-BY 4.0), bibliothèque [moshi](https://github.com/kyutai-labs/moshi) (MIT), voix de [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) : `livre` et `conteur` viennent du jeu [CML-TTS](https://openslr.org/146/) (CC-BY 4.0), les trois autres sont des enregistrements de Kyutai (CC0). Ailleurs dans ce dépôt de voix, certains jeux (`expresso/`, `ears/`) sont **non commerciaux** ; la licence de chaque dossier est indiquée dans son README.
 
