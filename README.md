@@ -39,6 +39,7 @@ Le reste de ce README détaille chaque étape, si tu préfères tout faire à la
 9. [Dépannage](#9-dépannage)
 10. [Désinstaller](#10-désinstaller)
 11. [Le patch (message final, file d'attente)](#11-le-patch-message-final-file-dattente)
+12. [Voix Kyutai (serveur local, carte NVIDIA)](#12-voix-kyutai-serveur-local-carte-nvidia)
 
 ---
 
@@ -284,12 +285,43 @@ for f in hooks/speak.sh hooks/interrupt.sh scripts/lib.sh; do
 done
 ```
 
+## 12. Voix Kyutai (serveur local, carte NVIDIA)
+
+Piper est rapide mais sonne « synthèse vocale ». [Kyutai TTS](https://kyutai.org/next/tts) (modèle `kyutai/tts-1.6b-en_fr`, laboratoire français, licence CC-BY 4.0) donne une voix bien plus naturelle, au prix d'une carte graphique. Le dossier [`kyutai/`](./kyutai) le fait tourner comme un **serveur local compatible avec l'API OpenAI** (`/v1/audio/speech`) : tout outil qui sait parler à OpenAI, comme [Alfred](https://github.com/lorloop/Alfred) ou [Cornelius](https://github.com/lfpoulain/Cornelius), peut s'en servir.
+
+```bash
+kyutai/install.sh          # environnement Python isolé dans kyutai/.venv (uv requis)
+kyutai/kyutai.sh start     # 1er lancement : télécharge le modèle (~4 Go)
+kyutai/kyutai.sh dis "Bonjour, la voix Kyutai fonctionne."
+kyutai/kyutai.sh stop      # libère la carte graphique
+```
+
+Autres commandes : `status`, `restart`, `logs`.
+
+**L'API**, sur `http://127.0.0.1:8002` (n'écoute que sur la machine) :
+
+| Requête | Réponse |
+|---|---|
+| `POST /v1/audio/speech` `{"input": "…", "voice": "livre", "response_format": "wav"}` | WAV complet, 16 bits, 24 kHz, mono |
+| idem avec `"response_format": "pcm"` | PCM brut s16le 24 kHz, envoyé au fil de la génération |
+| `GET /v1/voices` | voix courtes connues |
+| `GET /health` | `{"status": "ok"}` |
+
+Pour Alfred, dans son `.env` : `LOCALAI_TTS_BASE_URL=http://127.0.0.1:8002` et `LOCALAI_TTS_VOICE=livre`.
+
+**Voix.** `livre` (par défaut, extraite d'un livre audio), `developpeuse`, `fabien`, `developpeur`. On peut aussi donner n'importe quel chemin du dépôt [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices), par exemple `cml-tts/fr/…_enhanced.wav` (140 voix françaises), sans le suffixe `.1e68beda@240.safetensors`. Une voix inconnue retombe sur la voix par défaut.
+
+**Réglages** (variables d'environnement) : `KYUTAI_PORT` (8002), `KYUTAI_VOICE` (`livre`), `KYUTAI_DEVICE` (`cuda`), `KYUTAI_NQ` (32 ; 16 est environ 30 % plus rapide mais moins fidèle).
+
+**Matériel.** Mesuré sur une GTX 1060 6 Go (Pascal) : ~4 Go de mémoire vidéo au repos, ~5 Go pendant la génération, et environ 1,6 fois plus lent que le temps réel, plus ~2 s par phrase. Sur une carte aussi ancienne, ce serveur ne cohabite pas avec un modèle de langage local. Il convient quand le cerveau tourne ailleurs (Claude Code par exemple). Les cartes récentes (RTX 30xx et plus) vont nettement plus vite. Pour les cartes Pascal, `kyutai.sh` désactive `torch.compile` (`NO_TORCH_COMPILE=1`), que Triton refuse sur ces cartes, et `install.sh` installe PyTorch en build CUDA 12.6, qui les gère encore.
+
 ---
 
 ## Crédits
 
 - Plugin `tts` : [cadrianmae/claude-marketplace](https://github.com/cadrianmae/claude-marketplace) (MIT)
 - Moteur : [Piper](https://github.com/rhasspy/piper) ; voix : [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). Chaque voix a sa propre licence, indiquée dans sa fiche Hugging Face.
+- Voix Kyutai : modèle [Kyutai TTS](https://huggingface.co/kyutai/tts-1.6b-en_fr) (CC-BY 4.0), bibliothèque [moshi](https://github.com/kyutai-labs/moshi) (MIT), voix de [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) : `livre` vient du jeu [CML-TTS](https://openslr.org/146/) (CC-BY 4.0), les trois autres sont des enregistrements de Kyutai (CC0). Ailleurs dans ce dépôt de voix, certains jeux (`expresso/`, `ears/`) sont **non commerciaux** ; la licence de chaque dossier est indiquée dans son README.
 
 Ce dépôt contient de la documentation, des scripts d'installation, une config et un patch de quelques lignes ; il ne redistribue ni le plugin ni les voix.
 
