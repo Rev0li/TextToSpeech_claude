@@ -58,7 +58,42 @@ VOIX_DETAILS = {
     "narrateur": ("cml-tts/fr/1406_1028_000009-0003_enhanced.wav", "homme", "grave"),
     "recitant": ("cml-tts/fr/4937_3731_000004-0001_enhanced.wav", "homme", "plus claire"),
 }
+# Les 30 autres voix françaises nettoyées du même jeu, à tester avant d'en ajouter au menu :
+# (nom court, chemin, genre, hauteur médiane en Hz mesurée sur l'extrait de référence).
+VOIX_AUTRES = [
+    ("fr-4193", "cml-tts/fr/4193_3103_000004-0001_enhanced.wav", "homme", 85),
+    ("fr-7601", "cml-tts/fr/7601_7727_000062-0001_enhanced.wav", "homme", 95),
+    ("fr-4482", "cml-tts/fr/4482_3103_000063-0001_enhanced.wav", "homme", 114),
+    ("fr-9834", "cml-tts/fr/9834_9697_000150-0003_enhanced.wav", "homme", 114),
+    ("fr-5790", "cml-tts/fr/5790_4893_000052-0001_enhanced.wav", "homme", 116),
+    ("fr-2223", "cml-tts/fr/2223_1745_000009-0002_enhanced.wav", "homme", 122),
+    ("fr-2216", "cml-tts/fr/2216_1745_000007-0001_enhanced.wav", "homme", 124),
+    ("fr-296", "cml-tts/fr/296_1028_000022-0001_enhanced.wav", "homme", 124),
+    ("fr-1770", "cml-tts/fr/1770_1028_000036-0002_enhanced.wav", "homme", 125),
+    ("fr-7142", "cml-tts/fr/7142_2432_000124-0003_enhanced.wav", "homme", 133),
+    ("fr-928", "cml-tts/fr/928_486_000075-0001_enhanced.wav", "homme", 133),
+    ("fr-4724", "cml-tts/fr/4724_3731_000031-0001_enhanced.wav", "homme", 134),
+    ("fr-8128", "cml-tts/fr/8128_7016_000047-0002_enhanced.wav", "homme", 135),
+    ("fr-12205", "cml-tts/fr/12205_11650_000004-0002_enhanced.wav", "femme", 180),
+    ("fr-2154", "cml-tts/fr/2154_2576_000020-0003_enhanced.wav", "femme", 184),
+    ("fr-5476", "cml-tts/fr/5476_3103_000072-0001_enhanced.wav", "femme", 186),
+    ("fr-7591", "cml-tts/fr/7591_6742_000149-0002_enhanced.wav", "femme", 193),
+    ("fr-579", "cml-tts/fr/579_2548_000015-0001_enhanced.wav", "femme", 198),
+    ("fr-7400", "cml-tts/fr/7400_2928_000100-0001_enhanced.wav", "femme", 198),
+    ("fr-5207", "cml-tts/fr/5207_3078_000031-0002_enhanced.wav", "femme", 199),
+    ("fr-7762", "cml-tts/fr/7762_8734_000048-0002_enhanced.wav", "femme", 199),
+    ("fr-10177", "cml-tts/fr/10177_10625_000134-0003_enhanced.wav", "femme", 203),
+    ("fr-6318", "cml-tts/fr/6318_7016_000027-0002_enhanced.wav", "femme", 203),
+    ("fr-12977", "cml-tts/fr/12977_10625_000037-0001_enhanced.wav", "femme", 204),
+    ("fr-2465", "cml-tts/fr/2465_1943_000152-0002_enhanced.wav", "femme", 211),
+    ("fr-1591", "cml-tts/fr/1591_1028_000108-0004_enhanced.wav", "femme", 213),
+    ("fr-577", "cml-tts/fr/577_394_000070-0001_enhanced.wav", "femme", 222),
+    ("fr-12080", "cml-tts/fr/12080_11650_000047-0001_enhanced.wav", "femme", 235),
+    ("fr-3267", "cml-tts/fr/3267_1902_000075-0001_enhanced.wav", "femme", 242),
+    ("fr-10179", "cml-tts/fr/10179_11051_000005-0001_enhanced.wav", "femme", 286),
+]
 VOIX = {nom: chemin for nom, (chemin, _, _) in VOIX_DETAILS.items()}
+VOIX.update({nom: chemin for nom, chemin, _, _ in VOIX_AUTRES})
 VOIX_DEFAUT = os.environ.get("KYUTAI_VOICE", "livre")
 
 
@@ -196,7 +231,12 @@ class Gestionnaire(BaseHTTPRequestHandler):
                 {"nom": nom, "genre": genre, "description": description}
                 for nom, (_, genre, description) in VOIX_DETAILS.items()
             ]
-            self.repondre_json(200, {"voices": list(VOIX), "default": VOIX_DEFAUT, "details": details})
+            autres = [
+                {"nom": nom, "genre": genre, "hauteur": hauteur} for nom, _, genre, hauteur in VOIX_AUTRES
+            ]
+            self.repondre_json(200, {
+                "voices": list(VOIX_DETAILS), "default": VOIX_DEFAUT, "details": details, "autres": autres,
+            })
         elif self.path == "/v1/models":
             self.repondre_json(200, {"object": "list", "data": [{"id": "kyutai-tts", "object": "model"}]})
         else:

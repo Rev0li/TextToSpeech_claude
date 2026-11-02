@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,8 @@ type infoVoix struct {
 	Nom         string `json:"nom"`
 	Genre       string `json:"genre"`
 	Description string `json:"description"`
+	Hauteur     int    `json:"hauteur"`
+	Autre       bool   `json:"-"` // hors menu : à tester
 }
 
 type listeVoix struct {
@@ -42,11 +45,24 @@ func chargerVoix() tea.Msg {
 	defer r.Body.Close()
 	var corps struct {
 		Details []infoVoix `json:"details"`
+		Autres  []infoVoix `json:"autres"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&corps); err != nil || len(corps.Details) == 0 {
 		return listeVoix{err: fmt.Errorf("liste des voix illisible (serveur Kyutai à jour ?)")}
 	}
-	return listeVoix{voix: corps.Details}
+	// Autres voix : femmes puis hommes, de la plus grave à la plus aiguë.
+	sort.SliceStable(corps.Autres, func(i, j int) bool {
+		a, b := corps.Autres[i], corps.Autres[j]
+		if a.Genre != b.Genre {
+			return a.Genre == "femme"
+		}
+		return a.Hauteur < b.Hauteur
+	})
+	for i := range corps.Autres {
+		corps.Autres[i].Autre = true
+		corps.Autres[i].Description = fmt.Sprintf("%d Hz", corps.Autres[i].Hauteur)
+	}
+	return listeVoix{voix: append(corps.Details, corps.Autres...)}
 }
 
 func phraseEssai(nom string) string {
@@ -208,27 +224,39 @@ func (m *modele) toucheVoix(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ---- affichage -------------------------------------------------------------
 
 func (m *modele) vueVoix(l int) string {
-	var b strings.Builder
-	b.WriteString(styleTitre.Render("🎙 claude-voix › Voix") + "   " + styleDiscret.Render("la file des réponses est en pause") + "\n\n")
+	var entete, lignes []string
+	selLigne := 0
+	entete = append(entete, styleTitre.Render("🎙 claude-voix › Voix")+"   "+styleDiscret.Render("la file des réponses est en pause"), "")
 	if m.ev.err != "" {
-		b.WriteString(styleErreur.Render("  "+m.ev.err) + "\n\n")
+		entete = append(entete, styleErreur.Render("  "+m.ev.err), "")
 	}
 	if len(m.ev.voix) == 0 && m.ev.err == "" {
-		b.WriteString(styleDiscret.Render("  Chargement des voix…") + "\n")
+		entete = append(entete, styleDiscret.Render("  Chargement des voix…"))
 	}
 	actuelle := lireConfig().KyutaiVoix
-	genre := ""
+	section, genre := "", ""
 	for i, v := range m.ev.voix {
+		s := "Menu"
+		if v.Autre {
+			s = "Autres voix, à tester (dis à Claude lesquelles ajouter au menu)"
+		}
+		if s != section {
+			if section != "" {
+				lignes = append(lignes, "")
+			}
+			section, genre = s, ""
+			lignes = append(lignes, styleTitre.Render("  "+section))
+		}
 		if v.Genre != genre {
 			genre = v.Genre
-			titre := strings.ToUpper(genre[:1]) + genre[1:] + "s"
-			b.WriteString("  " + styleNom.Render(titre) + "\n")
+			lignes = append(lignes, "  "+styleNom.Render(strings.ToUpper(genre[:1])+genre[1:]+"s"))
 		}
 		curseur := "  "
 		if i == m.ev.sel {
 			curseur = styleTitre.Render("▸ ")
+			selLigne = len(lignes)
 		}
-		ligne := fmt.Sprintf("%s%-12s %s", curseur, v.Nom, styleDiscret.Render(fmt.Sprintf("%-16s", v.Description)))
+		ligne := fmt.Sprintf("    %s%-12s %s", curseur, v.Nom, styleDiscret.Render(fmt.Sprintf("%-16s", v.Description)))
 		var etat []string
 		if v.Nom == actuelle {
 			etat = append(etat, styleLecture.Render("✓ lit tes réponses"))
@@ -239,9 +267,21 @@ func (m *modele) vueVoix(l int) string {
 		case m.essai != nil && i == m.ev.sel:
 			etat = append(etat, styleLecture.Render("▶ écoute"))
 		}
-		b.WriteString("    " + ligne + "  " + strings.Join(etat, "  ") + "\n")
+		lignes = append(lignes, ligne+"  "+strings.Join(etat, "  "))
 	}
-	b.WriteString("\n" + styleDiscret.Render("  Phrase d'essai : « "+phraseEssai("[nom]")+" »") + "\n\n")
-	b.WriteString(styleAide.Width(l).Render("entrée écouter · espace choisir pour lire les réponses · ↑↓ parcourir · échap retour · q quitter") + "\n")
-	return lipgloss.NewStyle().MaxWidth(l).Render(b.String())
+	pied := []string{
+		"",
+		styleDiscret.Render("  Phrase d'essai : « " + phraseEssai("[nom]") + " »"),
+		"",
+		styleAide.Width(l).Render("entrée écouter · espace choisir pour lire les réponses · ↑↓ parcourir · échap retour · q quitter"),
+	}
+	// Défilement : la voix choisie reste visible.
+	place := max(m.hauteur-len(entete)-len(pied)-1, 5)
+	debut := 0
+	if len(lignes) > place {
+		debut = min(max(selLigne-place/2, 0), len(lignes)-place)
+		lignes = lignes[debut : debut+place]
+	}
+	tout := append(append(entete, lignes...), pied...)
+	return lipgloss.NewStyle().MaxWidth(l).Render(strings.Join(tout, "\n")) + "\n"
 }
