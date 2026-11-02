@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -86,13 +87,17 @@ func gestionnaire() error {
 		_ = os.Remove(chemin)
 	}()
 
+	// claude-voix gère le serveur Kyutai (si KYUTAI_SCRIPT est réglé) : il le démarre, ou
+	// reprend celui qui tourne déjà, et l'arrête en quittant pour libérer la carte graphique.
 	cfg := lireConfig()
-	lance := demarrerKyutai(cfg)
+	if demarrerKyutai(cfg) {
+		m.kyutaiDebut = time.Now()
+	}
 	go generateur(travaux, p)
 	_, err = p.Run()
 	m.Quitter()
 	close(travaux)
-	if lance {
+	if cfg.KyutaiScript != "" && (kyutaiPret(cfg) || kyutaiDemarre.Load()) {
 		fmt.Println("Arrêt du serveur Kyutai (libère la carte graphique)…")
 		arreterKyutai(cfg)
 	}
