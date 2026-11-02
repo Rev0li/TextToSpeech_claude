@@ -104,8 +104,14 @@ func arreterKyutai(cfg Config) {
 	_ = exec.Command(cfg.KyutaiScript, "stop").Run()
 }
 
+// clientCourt : vérifications d'état, sans connexion gardée ouverte côté serveur.
+var clientCourt = &http.Client{
+	Timeout:   2 * time.Second,
+	Transport: &http.Transport{DisableKeepAlives: true},
+}
+
 func kyutaiPret(cfg Config) bool {
-	client := http.Client{Timeout: 2 * time.Second}
+	client := clientCourt
 	r, err := client.Get(cfg.KyutaiURL + "/health")
 	if err != nil {
 		return false
@@ -123,6 +129,7 @@ func genererKyutai(ctx context.Context, cfg Config, texte, chemin string) error 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Close = true
 	r, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err

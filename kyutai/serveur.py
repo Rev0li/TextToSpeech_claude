@@ -218,9 +218,19 @@ class Gestionnaire(BaseHTTPRequestHandler):
             self.close_connection = True
 
 
+class Serveur(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # Client parti (lecture coupée, connexion de vérification fermée) : rien d'anormal.
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main() -> None:
     Gestionnaire.synthese = Synthese()
-    serveur = ThreadingHTTPServer((HOTE, PORT), Gestionnaire)
+    serveur = Serveur((HOTE, PORT), Gestionnaire)
     journal(f"prêt sur http://{HOTE}:{PORT} (voix par défaut : {VOIX_DEFAUT})")
     try:
         serveur.serve_forever()
